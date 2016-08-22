@@ -126,7 +126,7 @@ notFoundResponse =
     responseJSON
         status404
         []
-        (JSON.object 
+        (JSON.object
             [ "error" .= (404 :: Int)
             , "message" .== "Not Found"
             ]
@@ -136,7 +136,7 @@ methodNotAllowedResponse =
     responseJSON
         status405
         []
-        (JSON.object 
+        (JSON.object
             [ "error" .= (405 :: Int)
             , "message" .== "Method Not Allowed"
             ]
