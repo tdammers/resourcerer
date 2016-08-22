@@ -1,7 +1,6 @@
 #!/bin/bash
 while [ 1 ]
 do
-    echo "hi"
     resourcerer-example &
     PID="$!"
     inotifywait -e modify -e attrib "$(which resourcerer-example)"
