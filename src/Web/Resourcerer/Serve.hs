@@ -67,12 +67,6 @@ hateoasWrap links v =
 joinPath :: [Text] -> Text
 joinPath items = "/" <> (mconcat . List.intersperse "/" $ items)
 
--- apPure :: m (a -> b) -> m a -> m b
--- apPure f = (f <*>) . pure
-
-fmapPure :: Applicative m => (a -> b) -> a -> m b
-fmapPure f = pure . f
-
 getResource :: (Maybe (IO b)) -> (b -> Response) -> IO Response
 getResource actionMay buildResponse =
     case actionMay of
