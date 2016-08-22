@@ -30,14 +30,21 @@ import qualified Data.List as List
 (.==) :: Text -> Value -> (Text, Value)
 (.==) = (,)
 
-routeResources :: [(Text, Text -> Application)] -> Text -> Application
+routeResources :: [(Text, [Text] -> Application)] -> [Text] -> Application
 routeResources resources parentPath request respond = do
     case pathInfo request of
         [] -> respond $ responseJSON
                 status200
                 []
                 [ JSON.object
-                    [ "collections" .= (map fst resources) ]
+                    [ "collections" .=
+                        [ JSON.object
+                            [ "name" .= name
+                            , "_href" .= joinPath (parentPath ++ [name])
+                            ]
+                        | (name, _) <- resources
+                        ]
+                    ]
                 ]
         (ident:rest) -> do
             case lookup ident resources of
@@ -46,15 +53,19 @@ routeResources resources parentPath request respond = do
                     let request' = request { pathInfo = rest }
                     handler parentPath request' respond
 
-hateoasWrap :: Text -> Value -> Value
-hateoasWrap selfURI (JSON.Object o) =
-    let JSON.Object p = JSON.object [ "_href" .= selfURI ]
+hateoasWrap :: [(Text, Text)] -> Value -> Value
+hateoasWrap links (JSON.Object o) =
+    let JSON.Object p =
+            JSON.object
+                [ "links" .== JSON.object
+                    [ name .= value | (name, value) <- links ]
+                ]
     in JSON.Object $ o <> p
-hateoasWrap selfURI v =
-    hateoasWrap selfURI $ JSON.object [ "value" .== v ]
+hateoasWrap links v =
+    hateoasWrap links $ JSON.object [ "value" .== v ]
 
 joinPath :: [Text] -> Text
-joinPath = mconcat . List.intersperse "/"
+joinPath items = "/" <> (mconcat . List.intersperse "/" $ items)
 
 -- apPure :: m (a -> b) -> m a -> m b
 -- apPure f = (f <*>) . pure
@@ -68,33 +79,41 @@ getResource actionMay buildResponse =
         Nothing -> return methodNotAllowedResponse
         Just action -> buildResponse <$> action
 
-buildItemResponse :: ToJSON a => Text -> Resource a -> Text -> Maybe a -> Response
+buildItemResponse :: ToJSON a => [Text] -> Resource a -> Text -> Maybe a -> Response
 buildItemResponse _ _ _ Nothing =
     notFoundResponse
 buildItemResponse parentPath resource itemID (Just item) =
     responseJSON status200 []
-        . hateoasWrap (joinPath [parentPath, collectionName resource, itemID])
+        . hateoasWrap
+            [ ("self", joinPath $ parentPath ++ [collectionName resource, itemID])
+            , ("parent", joinPath parentPath)
+            ]
         $ toJSON item
 
-buildCollectionResponse :: ToJSON a => Text -> Resource a -> [(Text, a)] -> Response
+buildCollectionResponse :: ToJSON a => [Text] -> Resource a -> [(Text, a)] -> Response
 buildCollectionResponse parentPath resource items =
     responseJSON status200 []
-    .  hateoasWrap (joinPath [parentPath, collectionName resource])
+    . hateoasWrap
+        [ ("self", joinPath $ parentPath ++ [collectionName resource])
+        , ("parent", joinPath parentPath)
+        ]
     $ JSON.object
         [ collectionName resource .=
             [ hateoasWrap
-                (joinPath [parentPath, collectionName resource, i])
+                [ ("self", joinPath $ parentPath ++ [collectionName resource, i])
+                , ("parent", joinPath $ parentPath ++ [collectionName resource])
+                ]
                 (toJSON v)
             | (i, v) <- items
             ]
         , "count" .= length items
         ]
 
-jsonResource :: ToJSON a => Resource a -> (Text, Text -> Application)
+jsonResource :: ToJSON a => Resource a -> (Text, [Text] -> Application)
 jsonResource resource =
     (collectionName resource, handler)
     where
-        handler :: Text -> Application
+        handler :: [Text] -> Application
         handler parentPath request respond = do
             case requestMethod request of
                 "GET" -> case pathInfo request of
