@@ -52,10 +52,9 @@ routeResources resources parentPath request respond = do
                 []
                 [ JSON.object
                     [ "collections" .=
-                        [ JSON.object
-                            [ "name" .= name
-                            , "_href" .= joinPath (parentPath ++ [name])
-                            ]
+                        [ hateoasWrap
+                            [("self", joinPath (parentPath ++ [name]))] $
+                            JSON.object [ "name" .= name ]
                         | (name, _) <- resources
                         ]
                     ]
