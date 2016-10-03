@@ -2,19 +2,30 @@
 module Web.Resourcerer.Serve
 where
 
-import Web.Resourcerer.Resource (Resource (..), ListSpec (..))
+import Web.Resourcerer.Resource
+        ( Resource (..)
+        , ListSpec (..)
+        , StoreResult (..)
+        , DeleteResult (..)
+        )
 import qualified Data.Text
 import Data.Text (Text)
 import Network.Wai ( responseLBS
                    , requestMethod
+                   , mapResponseStatus
                    , pathInfo
+                   , lazyRequestBody
                    , Application
                    , Response (..)
                    )
 import Network.HTTP.Types ( Status
                           , status200
+                          , status201
+                          , status204
+                          , status400
                           , status404
                           , status405
+                          , status406
                           , Header
                           )
 import Data.Aeson ( Value
@@ -103,7 +114,7 @@ buildCollectionResponse parentPath resource items =
         , "count" .= length items
         ]
 
-jsonResource :: ToJSON a => Resource a -> (Text, [Text] -> Application)
+jsonResource :: (FromJSON a, ToJSON a) => Resource a -> (Text, [Text] -> Application)
 jsonResource resource =
     (collectionName resource, handler)
     where
@@ -119,7 +130,92 @@ jsonResource resource =
                                     (buildItemResponse
                                         parentPath resource itemID)
                     _ -> respond notFoundResponse
+                "POST" -> case pathInfo request of
+                    [] -> case createMay resource of
+                        Nothing -> respond methodNotAllowedResponse
+                        Just create -> do
+                            body <- lazyRequestBody request
+                            let parseResult = JSON.decode body
+                            case parseResult of
+                                Nothing ->
+                                    respond malformedJSONResponse
+                                Just item -> do
+                                    itemID <- create item
+                                    let response =
+                                            mapResponseStatus
+                                                (const status201) $
+                                            buildItemResponse
+                                                parentPath
+                                                resource
+                                                itemID
+                                                (Just item)
+                                    respond response
+                    [itemID] -> respond methodNotAllowedResponse
+                    _ -> respond notFoundResponse
+                "PUT" -> case pathInfo request of
+                    [] -> respond methodNotAllowedResponse
+                    [itemID] -> case storeMay resource of
+                        Nothing -> respond methodNotAllowedResponse
+                        Just store -> do
+                            body <- lazyRequestBody request
+                            let parseResult = JSON.decode body
+                            case parseResult of
+                                Nothing ->
+                                    respond malformedJSONResponse
+                                Just item -> do
+                                    result <- store itemID item
+                                    let response =
+                                            buildItemResponse
+                                                parentPath
+                                                resource
+                                                itemID
+                                                (Just item)
+                                    case result of
+                                        Created -> respond .
+                                            mapResponseStatus
+                                                (const status201) $
+                                            response
+                                        Updated -> respond response
+                                        StoreRejected -> respond conflictResponse
+                    _ -> respond notFoundResponse
+                "DELETE" -> case pathInfo request of
+                    [] -> respond methodNotAllowedResponse
+                    [itemID] -> case deleteMay resource of
+                        Nothing -> respond methodNotAllowedResponse
+                        Just delete -> do
+                            result <- delete itemID
+                            case result of
+                                Deleted -> respond deletedResponse
+                                NothingToDelete -> respond notFoundResponse
+                                DeleteRejected -> respond conflictResponse
+                    _ -> respond notFoundResponse
                 _ -> respond methodNotAllowedResponse
+
+malformedJSONResponse :: Response
+malformedJSONResponse =
+    responseJSON
+        status400
+        []
+        (JSON.object
+            [ "error" .= (400 :: Int)
+            , "message" .== "Malformed JSON"
+            ]
+        )
+
+deletedResponse :: Response
+deletedResponse =
+    responseLBS status204 [] ""
+
+conflictResponse :: Response
+conflictResponse =
+    responseJSON
+        status406
+        []
+        (JSON.object
+            [ "error" .= (406 :: Int)
+            , "message" .== "Conflict"
+            ]
+        )
 
 notFoundResponse :: Response
 notFoundResponse =
