@@ -1,5 +1,8 @@
 {-#LANGUAGE OverloadedStrings #-}
 module Web.Resourcerer.Serve
+( routeResources
+, jsonResource
+)
 where
 
 import Web.Resourcerer.Resource
