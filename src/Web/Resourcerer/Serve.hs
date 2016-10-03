@@ -93,7 +93,7 @@ buildItemResponse parentPath resource itemID (Just item) =
     responseJSON status200 []
         . hateoasWrap
             [ ("self", joinPath $ parentPath ++ [collectionName resource, itemID])
-            , ("parent", joinPath parentPath)
+            , ("parent", joinPath $ parentPath ++ [collectionName resource])
             ]
         $ toJSON item
 
