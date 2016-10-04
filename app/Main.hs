@@ -11,7 +11,7 @@ import Web.Resourcerer.Resource ( Resource (..)
                                 , StoreResult (..)
                                 , DeleteResult (..)
                                 )
-import Web.Resourcerer.Serve (routeResources, jsonResource)
+import Web.Resourcerer.Serve (routeResources, jsonHandler)
 import Data.Default (def)
 import Data.IORef
 import Data.HashMap.Strict (HashMap)
@@ -46,7 +46,7 @@ testResource name items = do
 app :: Resource Text -> Application
 app resource = 
     routeResources
-        [jsonResource resource]
+        [jsonHandler resource]
         []
 
 

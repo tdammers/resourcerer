@@ -1,7 +1,7 @@
 {-#LANGUAGE OverloadedStrings #-}
 module Web.Resourcerer.Serve
 ( routeResources
-, jsonResource
+, jsonHandler
 )
 where
 
@@ -86,10 +86,10 @@ getResource actionMay buildResponse =
         Nothing -> return methodNotAllowedResponse
         Just action -> buildResponse <$> action
 
-buildItemResponse :: ToJSON a => [Text] -> Resource a -> Text -> Maybe a -> Response
-buildItemResponse _ _ _ Nothing =
+buildJSONItemResponse :: ToJSON a => [Text] -> Resource a -> Text -> Maybe a -> Response
+buildJSONItemResponse _ _ _ Nothing =
     notFoundResponse
-buildItemResponse parentPath resource itemID (Just item) =
+buildJSONItemResponse parentPath resource itemID (Just item) =
     responseJSON status200 []
         . hateoasWrap
             [ ("self", joinPath $ parentPath ++ [collectionName resource, itemID])
@@ -97,8 +97,8 @@ buildItemResponse parentPath resource itemID (Just item) =
             ]
         $ toJSON item
 
-buildCollectionResponse :: ToJSON a => [Text] -> Resource a -> [(Text, a)] -> Response
-buildCollectionResponse parentPath resource items =
+buildJSONCollectionResponse :: ToJSON a => [Text] -> Resource a -> [(Text, a)] -> Response
+buildJSONCollectionResponse parentPath resource items =
     responseJSON status200 []
     . hateoasWrap
         [ ("self", joinPath $ parentPath ++ [collectionName resource])
@@ -116,85 +116,105 @@ buildCollectionResponse parentPath resource items =
         , "count" .= length items
         ]
 
-jsonResource :: (FromJSON a, ToJSON a) => Resource a -> (Text, [Text] -> Application)
-jsonResource resource =
+jsonGET :: (FromJSON a, ToJSON a) => Resource a -> [Text] -> Application
+jsonGET resource parentPath request respond =
+    case pathInfo request of
+        [] -> respond =<< getResource
+                (listMay resource <*> pure def)
+                (buildJSONCollectionResponse parentPath resource)
+        [itemID] -> respond =<< getResource
+                        (findMay resource <*> pure itemID)
+                        (buildJSONItemResponse
+                            parentPath resource itemID)
+        _ -> respond notFoundResponse
+
+jsonPOST :: (FromJSON a, ToJSON a) => Resource a -> [Text] -> Application
+jsonPOST resource parentPath request respond =
+    case pathInfo request of
+        [] -> case createMay resource of
+            Nothing -> respond methodNotAllowedResponse
+            Just create -> do
+                body <- lazyRequestBody request
+                let parseResult = JSON.decode body
+                case parseResult of
+                    Nothing ->
+                        respond malformedJSONResponse
+                    Just item -> do
+                        itemIDMay <- create item
+                        let response =
+                                case itemIDMay of
+                                    Nothing ->
+                                        conflictResponse
+                                    Just itemID ->
+                                        mapResponseStatus
+                                            (const status201) $
+                                        buildJSONItemResponse
+                                            parentPath
+                                            resource
+                                            itemID
+                                            (Just item)
+                        respond response
+        [itemID] -> respond methodNotAllowedResponse
+        _ -> respond notFoundResponse
+
+jsonPUT :: (FromJSON a, ToJSON a) => Resource a -> [Text] -> Application
+jsonPUT resource parentPath request respond =
+    case pathInfo request of
+        [] -> respond methodNotAllowedResponse
+        [itemID] -> case storeMay resource of
+            Nothing -> respond methodNotAllowedResponse
+            Just store -> do
+                body <- lazyRequestBody request
+                let parseResult = JSON.decode body
+                case parseResult of
+                    Nothing ->
+                        respond malformedJSONResponse
+                    Just item -> do
+                        result <- store itemID item
+                        let response =
+                                buildJSONItemResponse
+                                    parentPath
+                                    resource
+                                    itemID
+                                    (Just item)
+                        case result of
+                            Created -> respond .
+                                mapResponseStatus
+                                    (const status201) $
+                                response
+                            Updated -> respond response
+                            StoreRejected -> respond conflictResponse
+        _ -> respond notFoundResponse
+
+jsonDELETE :: (FromJSON a, ToJSON a) => Resource a -> [Text] -> Application
+jsonDELETE resource parentPath request respond =
+    case pathInfo request of
+        [] -> respond methodNotAllowedResponse
+        [itemID] -> case deleteMay resource of
+            Nothing -> respond methodNotAllowedResponse
+            Just delete -> do
+                result <- delete itemID
+                case result of
+                    Deleted -> respond deletedResponse
+                    NothingToDelete -> respond notFoundResponse
+                    DeleteRejected -> respond conflictResponse
+        _ -> respond notFoundResponse
+
+jsonHandler :: (FromJSON a, ToJSON a) => Resource a -> (Text, [Text] -> Application)
+jsonHandler resource =
     (collectionName resource, handler)
     where
         handler :: [Text] -> Application
         handler parentPath request respond = do
             case requestMethod request of
-                "GET" -> case pathInfo request of
-                    [] -> respond =<< getResource
-                            (listMay resource <*> pure def)
-                            (buildCollectionResponse parentPath resource)
-                    [itemID] -> respond =<< getResource
-                                    (findMay resource <*> pure itemID)
-                                    (buildItemResponse
-                                        parentPath resource itemID)
-                    _ -> respond notFoundResponse
-                "POST" -> case pathInfo request of
-                    [] -> case createMay resource of
-                        Nothing -> respond methodNotAllowedResponse
-                        Just create -> do
-                            body <- lazyRequestBody request
-                            let parseResult = JSON.decode body
-                            case parseResult of
-                                Nothing ->
-                                    respond malformedJSONResponse
-                                Just item -> do
-                                    itemIDMay <- create item
-                                    let response =
-                                            case itemIDMay of
-                                                Nothing ->
-                                                    conflictResponse
-                                                Just itemID ->
-                                                    mapResponseStatus
-                                                        (const status201) $
-                                                    buildItemResponse
-                                                        parentPath
-                                                        resource
-                                                        itemID
-                                                        (Just item)
-                                    respond response
-                    [itemID] -> respond methodNotAllowedResponse
-                    _ -> respond notFoundResponse
-                "PUT" -> case pathInfo request of
-                    [] -> respond methodNotAllowedResponse
-                    [itemID] -> case storeMay resource of
-                        Nothing -> respond methodNotAllowedResponse
-                        Just store -> do
-                            body <- lazyRequestBody request
-                            let parseResult = JSON.decode body
-                            case parseResult of
-                                Nothing ->
-                                    respond malformedJSONResponse
-                                Just item -> do
-                                    result <- store itemID item
-                                    let response =
-                                            buildItemResponse
-                                                parentPath
-                                                resource
-                                                itemID
-                                                (Just item)
-                                    case result of
-                                        Created -> respond .
-                                            mapResponseStatus
-                                                (const status201) $
-                                            response
-                                        Updated -> respond response
-                                        StoreRejected -> respond conflictResponse
-                    _ -> respond notFoundResponse
-                "DELETE" -> case pathInfo request of
-                    [] -> respond methodNotAllowedResponse
-                    [itemID] -> case deleteMay resource of
-                        Nothing -> respond methodNotAllowedResponse
-                        Just delete -> do
-                            result <- delete itemID
-                            case result of
-                                Deleted -> respond deletedResponse
-                                NothingToDelete -> respond notFoundResponse
-                                DeleteRejected -> respond conflictResponse
-                    _ -> respond notFoundResponse
+                "GET" ->
+                    jsonGET resource parentPath request respond
+                "POST" ->
+                    jsonPOST resource parentPath request respond
+                "PUT" ->
+                    jsonPUT resource parentPath request respond
+                "DELETE" ->
+                    jsonDELETE resource parentPath request respond
                 _ -> respond methodNotAllowedResponse
 
 malformedJSONResponse :: Response
