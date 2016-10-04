@@ -142,15 +142,19 @@ jsonResource resource =
                                 Nothing ->
                                     respond malformedJSONResponse
                                 Just item -> do
-                                    itemID <- create item
+                                    itemIDMay <- create item
                                     let response =
-                                            mapResponseStatus
-                                                (const status201) $
-                                            buildItemResponse
-                                                parentPath
-                                                resource
-                                                itemID
-                                                (Just item)
+                                            case itemIDMay of
+                                                Nothing ->
+                                                    conflictResponse
+                                                Just itemID ->
+                                                    mapResponseStatus
+                                                        (const status201) $
+                                                    buildItemResponse
+                                                        parentPath
+                                                        resource
+                                                        itemID
+                                                        (Just item)
                                     respond response
                     [itemID] -> respond methodNotAllowedResponse
                     _ -> respond notFoundResponse
