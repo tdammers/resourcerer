@@ -14,6 +14,12 @@ data MultiDocument =
         , mdViews :: [(MimeType, IO LBS.ByteString)]
         }
 
+-- | @selectView accepts options@ selects the entry from 'options' whose MIME
+-- type matches the earliest entry in 'accepts', as per 'Mime.isMatch'.
+--
+-- The intended use case is to pass a parsed list of acceptable content types
+-- from an HTTP @Accept@ header as @accepts@ (highest @q@ score first), and an
+-- association list of available handlers as @options@.
 selectView :: [MimeType] -> [(MimeType, a)] -> Maybe (MimeType, a)
 selectView accepts options =
     let matches = do
