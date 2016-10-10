@@ -11,7 +11,7 @@ import qualified Data.Aeson as JSON
 data MultiDocument =
     MultiDocument
         { mdJSON :: Maybe JSON.Value
-        , mdViews :: [(MimeType, IO LBS.ByteString)]
+        , mdViews :: [(MimeType, LBS.ByteString)]
         }
 
 -- | @selectView accepts options@ selects the entry from 'options' whose MIME

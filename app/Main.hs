@@ -62,7 +62,7 @@ nameMulti :: Text -> MultiDocument
 nameMulti name =
     MultiDocument
         (Just $ toJSON name)
-        [("text/plain", return $ textToLBS name)
+        [("text/plain", textToLBS name)
         ]
 
 main :: IO ()

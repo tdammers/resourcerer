@@ -155,7 +155,7 @@ requestAccept rq =
 getMulti :: [MimeType] -> [Text] -> Text -> Text -> MultiDocument -> IO (Maybe (MimeType, LBS.ByteString))
 getMulti accepts parentPath collectionName itemID multi = do
     let jsonViewMay = do
-            return . JSON.encode . itemToJSON parentPath collectionName itemID <$> mdJSON multi
+            JSON.encode . itemToJSON parentPath collectionName itemID <$> mdJSON multi
     let jsonHandlers = case jsonViewMay of
             Nothing ->
                 []
@@ -166,8 +166,7 @@ getMulti accepts parentPath collectionName itemID multi = do
     let handlers = jsonHandlers ++ mdViews multi
     case selectView accepts handlers of
         Nothing -> return Nothing
-        Just (mimeType, load) -> do
-            body <- load
+        Just (mimeType, body) -> do
             return $ Just (mimeType, body)
 
 multiGET :: Resource (MultiDocument) -> [Text] -> Application
