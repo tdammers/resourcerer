@@ -159,22 +159,21 @@ requestType rq =
     let contentTypeHeader = fromMaybe "*/*" . lookup "content-type" . requestHeaders $ rq
     in Mime.parse contentTypeHeader
 
-getMulti :: [MimeType] -> [Text] -> Text -> Text -> MultiDocument -> IO (Maybe (MimeType, LBS.ByteString))
-getMulti accepts parentPath collectionName itemID multi = do
+getMulti :: [MimeType] -> [Text] -> Text -> Text -> MultiDocument -> (Maybe (MimeType, LBS.ByteString))
+getMulti accepts parentPath collectionName itemID multi =
     let jsonViewMay = do
             JSON.encode . itemToJSON parentPath collectionName itemID <$> mdJSON multi
-    let jsonHandlers = case jsonViewMay of
+        jsonHandlers = case jsonViewMay of
             Nothing ->
                 []
             Just jsonView ->
                 [ ("text/json", jsonView)
                 , ("application/json", jsonView)
                 ]
-    let handlers = jsonHandlers ++ mdViews multi
-    case selectView accepts handlers of
-        Nothing -> return Nothing
-        Just (mimeType, body) -> do
-            return $ Just (mimeType, body)
+        handlers = jsonHandlers ++ mdViews multi
+    in case selectView accepts handlers of
+        Nothing -> Nothing
+        Just (mimeType, body) -> Just (mimeType, body)
 
 storeResultToResponse :: (Text -> Response)
                        -> StoreResult
@@ -194,6 +193,23 @@ storeResultToResponse okResponse =
         Updated itemID ->
             okResponse itemID
 
+multiToResponse :: [MimeType] -> Resource MultiDocument -> [Text] -> Text -> MultiDocument -> Response
+multiToResponse accepts resource parentPath itemID item =
+    let viewMay = getMulti
+            accepts
+            parentPath
+            (collectionName resource)
+            itemID
+            item
+    in case viewMay of
+        Nothing ->
+            notAcceptableResponse
+        Just (mimeType, body) ->
+            responseLBS
+                status200
+                [("Content-type", Mime.pack mimeType)]
+                body
+
 multiGET :: Resource MultiDocument -> [Text] -> Application
 multiGET resource parentPath request respond = do
     let accepts = requestAccept request
@@ -209,63 +225,69 @@ multiGET resource parentPath request respond = do
                     case itemMay of
                         Nothing ->
                             respond notFoundResponse
-                        Just item -> do
-                            viewMay <- getMulti
-                                accepts
-                                parentPath
-                                (collectionName resource)
-                                itemID
-                                item
-                            case viewMay of
-                                Nothing ->
-                                    respond notAcceptableResponse
-                                Just (mimeType, body) ->
-                                    respond $
-                                        responseLBS
-                                            status200
-                                            [("Content-type", Mime.pack mimeType)]
-                                            body
+                        Just item ->
+                            respond $
+                                multiToResponse
+                                    accepts
+                                    resource
+                                    parentPath
+                                    itemID item
         _ -> respond notFoundResponse
+
+multiFromRequestBody :: MimeType -> LBS.ByteString -> Maybe MultiDocument
+multiFromRequestBody mimeType body =
+    if Mime.isMatch mimeType "text/json" ||
+       Mime.isMatch mimeType "application/json"
+        then
+            let parseResult :: Maybe JSON.Value
+                parseResult = JSON.decode body
+            in case parseResult of
+                Nothing -> Nothing
+                Just jsonItem ->
+                    Just $ MultiDocument (Just jsonItem) []
+        else
+            Just $ MultiDocument Nothing [(mimeType, body)]
 
 multiPOST :: Resource MultiDocument -> [Text] -> Application
 multiPOST resource parentPath request respond =
-    case pathInfo request of
-        [] -> case createMay resource of
-            Nothing ->
-                respond methodNotAllowedResponse
-            Just create -> do
-                body <- lazyRequestBody request
-                let mimeType = requestType request
-                if Mime.isMatch mimeType "text/json" ||
-                   Mime.isMatch mimeType "application/json"
-                    then do
-                        let parseResult :: Maybe JSON.Value
-                            parseResult = JSON.decode body
-                        case parseResult of
-                            Nothing ->
-                                respond malformedJSONResponse
-                            Just jsonItem -> do
-                                let item = MultiDocument (Just jsonItem) []
-                                create item >>= respond .
-                                    storeResultToResponse
-                                        (\itemID ->
-                                            mapResponseStatus
-                                                (const status201) $
-                                            buildJSONItemResponse
-                                                parentPath
-                                                resource
-                                                itemID
-                                                (Just jsonItem))
-                    else do
-                        let item = MultiDocument Nothing [(mimeType, body)]
-                        create item >>= respond .
-                            storeResultToResponse
-                                (\itemID ->
-                                    responseLBS
-                                        status201
-                                        [("Content-type", Mime.pack mimeType)]
-                                        body)
-        [itemID] -> respond methodNotAllowedResponse
+    case (pathInfo request, createMay resource) of
+        ([], Just create) -> do
+            body <- lazyRequestBody request
+            let mimeType = requestType request
+                accepts = requestAccept request
+                docResult = multiFromRequestBody mimeType body
+            case docResult of
+                Nothing -> respond malformedJSONResponse
+                Just item -> do
+                    storeResult <- create item
+                    respond $ storeResultToResponse
+                        (\itemID -> multiToResponse
+                            accepts
+                            resource
+                            parentPath
+                            itemID item) storeResult
+        ([itemID], _) -> respond methodNotAllowedResponse
+        _ -> respond notFoundResponse
+
+multiPUT :: Resource MultiDocument -> [Text] -> Application
+multiPUT resource parentPath request respond =
+    case (pathInfo request, storeMay resource) of
+        ([itemID], Just store) -> do
+            body <- lazyRequestBody request
+            let mimeType = requestType request
+                accepts = requestAccept request
+                docResult = multiFromRequestBody mimeType body
+            case docResult of
+                Nothing -> respond malformedJSONResponse
+                Just item -> do
+                    storeResult <- store itemID item
+                    respond $ storeResultToResponse
+                        (\itemID -> multiToResponse
+                            accepts
+                            resource
+                            parentPath
+                            itemID item) storeResult
+        ([], _) -> respond methodNotAllowedResponse
         _ -> respond notFoundResponse
 
 jsonGET :: (FromJSON a, ToJSON a) => Resource a -> [Text] -> Application
@@ -371,6 +393,8 @@ multiHandler resource =
                     multiGET resource parentPath request respond
                 "POST" ->
                     multiPOST resource parentPath request respond
+                "PUT" ->
+                    multiPUT resource parentPath request respond
                 "DELETE" ->
                     handleDELETE resource parentPath request respond
                 _ -> respond methodNotAllowedResponse
