@@ -320,23 +320,13 @@ jsonPUT resource parentPath request respond =
                     Nothing ->
                         respond malformedJSONResponse
                     Just item -> do
-                        result <- store itemID item
-                        let response =
+                        store itemID item >>= respond . storeResultToResponse
+                            (\itemID ->
                                 buildJSONItemResponse
                                     parentPath
                                     resource
                                     itemID
-                                    (Just item)
-                        case result of
-                            Created _ -> respond .
-                                mapResponseStatus
-                                    (const status201) $
-                                response
-                            Updated _ -> respond response
-                            StoreRejectedExists -> respond conflictResponse
-                            StoreRejectedWrongType -> respond notAcceptableResponse
-                            StoreRejectedDoesNotExist -> respond notFoundResponse
-                            StoreRejectedMalformed -> respond malformedJSONResponse
+                                    (Just item))
         _ -> respond notFoundResponse
 
 handleDELETE :: Resource a -> [Text] -> Application
