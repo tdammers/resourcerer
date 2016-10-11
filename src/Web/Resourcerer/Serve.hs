@@ -12,6 +12,7 @@ import Web.Resourcerer.Resource
         , ListSpec (..)
         , StoreResult (..)
         , DeleteResult (..)
+        , StoreResult (..)
         )
 import Web.Resourcerer.MultiDocument (MultiDocument (..), selectView)
 import Web.Resourcerer.Mime (MimeType (..))
@@ -37,6 +38,7 @@ import Network.HTTP.Types ( Status
                           , status405
                           , status406
                           , status409
+                          , status415
                           , Header
                           )
 import Data.Aeson ( Value
@@ -98,7 +100,7 @@ getResource actionMay buildResponse =
         Nothing -> return methodNotAllowedResponse
         Just action -> buildResponse <$> action
 
-buildJSONItemResponse :: ToJSON a => [Text] -> Resource a -> Text -> Maybe a -> Response
+buildJSONItemResponse :: ToJSON a => [Text] -> Resource b -> Text -> Maybe a -> Response
 buildJSONItemResponse _ _ _ Nothing =
     notFoundResponse
 buildJSONItemResponse parentPath resource itemID (Just item) =
@@ -152,6 +154,11 @@ requestAccept rq =
     let acceptHeader = fromMaybe "*/*" . lookup "accept" . requestHeaders $ rq
     in Mime.parseAccept acceptHeader
 
+requestType :: Request -> MimeType
+requestType rq =
+    let contentTypeHeader = fromMaybe "*/*" . lookup "content-type" . requestHeaders $ rq
+    in Mime.parse contentTypeHeader
+
 getMulti :: [MimeType] -> [Text] -> Text -> Text -> MultiDocument -> IO (Maybe (MimeType, LBS.ByteString))
 getMulti accepts parentPath collectionName itemID multi = do
     let jsonViewMay = do
@@ -169,7 +176,25 @@ getMulti accepts parentPath collectionName itemID multi = do
         Just (mimeType, body) -> do
             return $ Just (mimeType, body)
 
-multiGET :: Resource (MultiDocument) -> [Text] -> Application
+storeResultToResponse :: (Text -> Response)
+                       -> StoreResult
+                       -> Response
+storeResultToResponse okResponse =
+    \case
+        StoreRejectedWrongType ->
+            unsupportedMediaTypeResponse
+        StoreRejectedMalformed ->
+            malformedJSONResponse
+        StoreRejectedExists ->
+            conflictResponse
+        StoreRejectedDoesNotExist ->
+            notFoundResponse
+        Created itemID ->
+            okResponse itemID
+        Updated itemID ->
+            okResponse itemID
+
+multiGET :: Resource MultiDocument -> [Text] -> Application
 multiGET resource parentPath request respond = do
     let accepts = requestAccept request
     case pathInfo request of
@@ -202,6 +227,47 @@ multiGET resource parentPath request respond = do
                                             body
         _ -> respond notFoundResponse
 
+multiPOST :: Resource MultiDocument -> [Text] -> Application
+multiPOST resource parentPath request respond =
+    case pathInfo request of
+        [] -> case createMay resource of
+            Nothing ->
+                respond methodNotAllowedResponse
+            Just create -> do
+                body <- lazyRequestBody request
+                let mimeType = requestType request
+                if Mime.isMatch mimeType "text/json" ||
+                   Mime.isMatch mimeType "application/json"
+                    then do
+                        let parseResult :: Maybe JSON.Value
+                            parseResult = JSON.decode body
+                        case parseResult of
+                            Nothing ->
+                                respond malformedJSONResponse
+                            Just jsonItem -> do
+                                let item = MultiDocument (Just jsonItem) []
+                                create item >>= respond .
+                                    storeResultToResponse
+                                        (\itemID ->
+                                            mapResponseStatus
+                                                (const status201) $
+                                            buildJSONItemResponse
+                                                parentPath
+                                                resource
+                                                itemID
+                                                (Just jsonItem))
+                    else do
+                        let item = MultiDocument Nothing [(mimeType, body)]
+                        create item >>= respond .
+                            storeResultToResponse
+                                (\itemID ->
+                                    responseLBS
+                                        status201
+                                        [("Content-type", Mime.pack mimeType)]
+                                        body)
+        [itemID] -> respond methodNotAllowedResponse
+        _ -> respond notFoundResponse
+
 jsonGET :: (FromJSON a, ToJSON a) => Resource a -> [Text] -> Application
 jsonGET resource parentPath request respond =
     case pathInfo request of
@@ -226,20 +292,18 @@ jsonPOST resource parentPath request respond =
                     Nothing ->
                         respond malformedJSONResponse
                     Just item -> do
-                        itemIDMay <- create item
-                        let response =
-                                case itemIDMay of
-                                    Nothing ->
-                                        conflictResponse
-                                    Just itemID ->
-                                        mapResponseStatus
-                                            (const status201) $
-                                        buildJSONItemResponse
-                                            parentPath
-                                            resource
-                                            itemID
-                                            (Just item)
-                        respond response
+                        storeResult <- create item
+                        respond $
+                            storeResultToResponse
+                                (\itemID ->
+                                    mapResponseStatus
+                                        (const status201) $
+                                    buildJSONItemResponse
+                                        parentPath
+                                        resource
+                                        itemID
+                                        (Just item))
+                                storeResult
         [itemID] -> respond methodNotAllowedResponse
         _ -> respond notFoundResponse
 
@@ -264,12 +328,15 @@ jsonPUT resource parentPath request respond =
                                     itemID
                                     (Just item)
                         case result of
-                            Created -> respond .
+                            Created _ -> respond .
                                 mapResponseStatus
                                     (const status201) $
                                 response
-                            Updated -> respond response
-                            StoreRejected -> respond conflictResponse
+                            Updated _ -> respond response
+                            StoreRejectedExists -> respond conflictResponse
+                            StoreRejectedWrongType -> respond notAcceptableResponse
+                            StoreRejectedDoesNotExist -> respond notFoundResponse
+                            StoreRejectedMalformed -> respond malformedJSONResponse
         _ -> respond notFoundResponse
 
 handleDELETE :: Resource a -> [Text] -> Application
@@ -312,6 +379,8 @@ multiHandler resource =
             case requestMethod request of
                 "GET" ->
                     multiGET resource parentPath request respond
+                "POST" ->
+                    multiPOST resource parentPath request respond
                 "DELETE" ->
                     handleDELETE resource parentPath request respond
                 _ -> respond methodNotAllowedResponse
@@ -372,6 +441,17 @@ notAcceptableResponse =
         (JSON.object
             [ "error" .= (406 :: Int)
             , "message" .== "Not Acceptable"
+            ]
+        )
+
+unsupportedMediaTypeResponse :: Response
+unsupportedMediaTypeResponse =
+    responseJSON
+        status415
+        []
+        (JSON.object
+            [ "error" .= (415 :: Int)
+            , "message" .== "Unsupported Media Type"
             ]
         )
 
