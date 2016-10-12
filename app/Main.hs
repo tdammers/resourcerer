@@ -18,9 +18,9 @@ import Data.Default (def)
 import Data.IORef
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
-import Data.Aeson (toJSON, fromJSON)
+import Data.Aeson (toJSON, fromJSON, (.=))
 import qualified Data.Aeson as JSON
-import Data.Aeson.Helpers (fromJSONMay)
+import Data.Aeson.Helpers (fromJSONMay, (.==))
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.ByteString.Lazy as LBS
@@ -102,10 +102,32 @@ testResource name items = do
                 in (items', result)
         }
 
+jsonTreeResource :: Text -> JSON.Value -> Resource JSON.Value
+jsonTreeResource name root =
+    def { collectionName = name
+        , listMay = Just $ \_ -> case root of
+                        JSON.Object o -> return (HashMap.toList o)
+                        _ -> return []
+        , findMay = Just $ \i -> case root of
+                        JSON.Object items -> return $ HashMap.lookup i items
+                        _ -> return Nothing
+        }
+
+settingsData = JSON.object
+    [ "username" .= ("someone" :: Text)
+    , "password" .= ("super secret" :: Text)
+    , "digits" .== JSON.object
+        [ "one" .= (1 :: Int)
+        , "two" .= (2 :: Int)
+        ]
+    ]
+
 app :: Resource MultiDocument -> Application
 app resource = 
     routeResources
-        [multiHandler resource]
+        [ multiHandler resource
+        , jsonHandler $ jsonTreeResource "settings" settingsData
+        ]
         []
 
 nameMulti :: Text -> MultiDocument

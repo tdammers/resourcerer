@@ -61,7 +61,7 @@ data Resource a =
         { collectionName :: Text
         , findMay :: Maybe (Identifier -> IO (Maybe a))
         , listMay :: Maybe (ListSpec -> IO [(Identifier, a)])
-        , subResourcesMay :: Maybe (Identifier -> IO (Resource a))
+        , subResourcesMay :: Maybe (Identifier -> IO [Resource a])
         , createMay :: Maybe (a -> IO (StoreResult a)) -- ^ create new, auto-generate ID
         , storeMay :: Maybe (Identifier -> a -> IO (StoreResult a)) -- ^ create or overwrite by ID
         , deleteMay :: Maybe (Identifier -> IO DeleteResult) -- ^ delete an item by ID
@@ -94,7 +94,7 @@ mapResource encode decode r =
 
         mappedFindMay = (fmap . fmap . fmap . fmap $ encode) $ findMay r
         mappedListMay = (fmap . fmap . fmap . fmap . fmap $ encode) $ listMay r
-        mappedSubResourcesMay = (fmap . fmap . fmap . fmap $ mapResource encode decode) subResourcesMay r
+        mappedSubResourcesMay = (fmap . fmap . fmap . fmap . fmap $ mapResource encode decode) subResourcesMay r
         mappedCreateMay = case createMay r of
             Nothing -> Nothing
             Just create -> Just $ \x -> do

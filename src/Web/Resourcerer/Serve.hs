@@ -61,6 +61,7 @@ import qualified Data.Aeson.Helpers as JSON
 import Data.Default (def)
 import Data.Monoid ( (<>) )
 import qualified Data.List as List
+import Data.List (find)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString.Lazy as LBS
 import Control.Exception (throw, catch)
@@ -186,6 +187,25 @@ multiToResponse accepts resource parentPath itemID item status =
         [("Content-type", Mime.pack mimeType)]
         body
 
+findSubResource :: Resource a -> Text -> Text -> IO (Resource a)
+findSubResource resource itemID subResourceID = do
+    let getSubResources = fromMaybe (throw NotFound) (subResourcesMay resource)
+    subResources <- getSubResources itemID
+    return . fromMaybe (throw NotFound) $
+        find ((== subResourceID) . collectionName) subResources
+
+forwardToSubResource :: Resource a
+                     -> [Text]
+                     -> (Resource a -> [Text] -> Application)
+                     -> Application
+forwardToSubResource resource parentPath subHandler request respond = do
+    case pathInfo request of
+        (itemID:subResourceID:rest) -> do
+            subResource <- findSubResource resource itemID subResourceID
+            let request' = request { pathInfo = rest }
+            subHandler subResource (parentPath ++ [itemID]) request' respond
+        _ -> throw NotFound
+
 multiGET :: Resource MultiDocument -> [Text] -> Application
 multiGET resource parentPath request respond = do
     let accepts = requestAccept request
@@ -204,7 +224,8 @@ multiGET resource parentPath request respond = do
                     itemID
                     item
                     status200
-        _ -> throw NotFound
+        _ -> forwardToSubResource
+                resource parentPath multiGET request respond
 
 multiFromRequestBody :: MimeType -> LBS.ByteString -> MultiDocument
 multiFromRequestBody mimeType body =
@@ -232,7 +253,8 @@ multiPOST resource parentPath request respond =
             respond $ multiToResponse
                 accepts resource parentPath itemID item status
         ([itemID], _) -> throw MethodNotAllowed
-        _ -> throw NotFound
+        _ -> forwardToSubResource
+                resource parentPath multiPOST request respond
 
 multiPUT :: Resource MultiDocument -> [Text] -> Application
 multiPUT resource parentPath request respond =
@@ -247,7 +269,8 @@ multiPUT resource parentPath request respond =
             respond $ multiToResponse
                 accepts resource parentPath itemID item status
         ([], _) -> throw MethodNotAllowed
-        _ -> throw NotFound
+        _ -> forwardToSubResource
+                resource parentPath multiPUT request respond
 
 multiDELETE :: Resource a -> [Text] -> Application
 multiDELETE resource parentPath request respond =
@@ -259,7 +282,8 @@ multiDELETE resource parentPath request respond =
                 NothingToDelete -> throw NotFound
                 DeleteRejected -> throw Conflict
                 Deleted -> respond deletedResponse
-        _ -> throw NotFound
+        _ -> forwardToSubResource
+                resource parentPath multiDELETE request respond
 
 jsonHandler :: (FromJSON a, ToJSON a) => Resource a -> (Text, [Text] -> Application)
 jsonHandler =
