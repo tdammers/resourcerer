@@ -103,14 +103,14 @@ testResource name items = do
                                 Nothing -> Created i
                                 Just _ -> Updated i
                         in (items', result)
-        -- , deleteMay = Just $ \i ->
-        --     atomicModifyIORef' db $ \items ->
-        --         let oldVal = HashMap.lookup i items
-        --             items' = HashMap.delete i items
-        --             result = case oldVal of
-        --                 Nothing -> NothingToDelete
-        --                 Just _ -> Deleted
-        --         in (items', result)
+        , deleteMay = Just $ \i ->
+            atomicModifyIORef' db $ \items ->
+                let oldVal = HashMap.lookup i items
+                    items' = HashMap.delete i items
+                    result = case oldVal of
+                        Nothing -> NothingToDelete
+                        Just _ -> Deleted
+                in (items', result)
         }
 
 app :: Resource MultiDocument -> Application
