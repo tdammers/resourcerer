@@ -155,11 +155,11 @@ getMulti accepts parentPath collectionName itemID multi =
         Nothing -> Nothing
         Just (mimeType, body) -> Just (mimeType, body)
 
-storeResultToResponse :: (Text -> Response)
-                       -> StoreResult
-                       -> Response
-storeResultToResponse okResponse =
-    \case
+storeResultToResponse :: StoreResult
+                      -> (Text -> Status -> Response)
+                      -> Response
+storeResultToResponse result okResponse =
+    case result of
         StoreRejectedWrongType ->
             unsupportedMediaTypeResponse
         StoreRejectedMalformed ->
@@ -169,12 +169,12 @@ storeResultToResponse okResponse =
         StoreRejectedDoesNotExist ->
             notFoundResponse
         Created itemID ->
-            okResponse itemID
+            okResponse itemID status201
         Updated itemID ->
-            okResponse itemID
+            okResponse itemID status200
 
-multiToResponse :: [MimeType] -> Resource MultiDocument -> [Text] -> Text -> MultiDocument -> Response
-multiToResponse accepts resource parentPath itemID item =
+multiToResponse :: [MimeType] -> Resource MultiDocument -> [Text] -> MultiDocument -> Text -> Status -> Response
+multiToResponse accepts resource parentPath item itemID status =
     let viewMay = getMulti
             accepts
             parentPath
@@ -186,7 +186,7 @@ multiToResponse accepts resource parentPath itemID item =
             notAcceptableResponse
         Just (mimeType, body) ->
             responseLBS
-                status200
+                status
                 [("Content-type", Mime.pack mimeType)]
                 body
 
@@ -211,7 +211,9 @@ multiGET resource parentPath request respond = do
                                     accepts
                                     resource
                                     parentPath
-                                    itemID item
+                                    item
+                                    itemID
+                                    status200
         _ -> respond notFoundResponse
 
 multiFromRequestBody :: MimeType -> LBS.ByteString -> Maybe MultiDocument
@@ -240,12 +242,12 @@ multiPOST resource parentPath request respond =
                 Nothing -> respond malformedInputResponse
                 Just item -> do
                     storeResult <- create item
-                    respond $ storeResultToResponse
-                        (\itemID -> multiToResponse
+                    respond . storeResultToResponse storeResult $
+                        multiToResponse
                             accepts
                             resource
                             parentPath
-                            itemID item) storeResult
+                            item
         ([itemID], _) -> respond methodNotAllowedResponse
         _ -> respond notFoundResponse
 
@@ -261,12 +263,12 @@ multiPUT resource parentPath request respond =
                 Nothing -> respond malformedInputResponse
                 Just item -> do
                     storeResult <- store itemID item
-                    respond $ storeResultToResponse
-                        (\itemID -> multiToResponse
+                    respond . storeResultToResponse storeResult $
+                        multiToResponse
                             accepts
                             resource
                             parentPath
-                            itemID item) storeResult
+                            item
         ([], _) -> respond methodNotAllowedResponse
         _ -> respond notFoundResponse
 
