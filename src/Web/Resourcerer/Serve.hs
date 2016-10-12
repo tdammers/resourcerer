@@ -99,9 +99,7 @@ joinPath items = "/" <> (mconcat . List.intersperse "/" $ items)
 
 getResource :: (Maybe (IO b)) -> (b -> Response) -> IO Response
 getResource actionMay buildResponse =
-    case actionMay of
-        Nothing -> return methodNotAllowedResponse
-        Just action -> buildResponse <$> action
+    buildResponse <$> fromMaybe (throw MethodNotAllowed) actionMay
 
 itemToJSON :: ToJSON a => [Text] -> Text -> Text -> a -> JSON.Value
 itemToJSON parentPath collectionName itemID item =
