@@ -15,8 +15,19 @@ import Web.Resourcerer.Resource
         , StoreResult (..)
         , mapResource
         )
+import Web.Resourcerer.Serve.Responses
+        ( malformedInputResponse
+        , deletedResponse
+        , conflictResponse
+        , notFoundResponse
+        , methodNotAllowedResponse
+        , notAcceptableResponse
+        , unsupportedMediaTypeResponse
+        , responseJSON
+        )
 import Web.Resourcerer.MultiDocument (MultiDocument (..), selectView)
 import Web.Resourcerer.Mime (MimeType (..))
+import Web.Resourcerer.Hateoas (hateoasWrap)
 import qualified Web.Resourcerer.Mime as Mime
 import qualified Data.Text
 import Data.Text (Text)
@@ -34,12 +45,6 @@ import Network.HTTP.Types ( Status
                           , status200
                           , status201
                           , status204
-                          , status400
-                          , status404
-                          , status405
-                          , status406
-                          , status409
-                          , status415
                           , Header
                           )
 import Data.Aeson ( Value
@@ -48,20 +53,13 @@ import Data.Aeson ( Value
                   , (.=)
                   )
 import qualified Data.Aeson as JSON
+import Data.Aeson.Helpers ( (.==), fromJSONMay )
+import qualified Data.Aeson.Helpers as JSON
 import Data.Default (def)
 import Data.Monoid ( (<>) )
 import qualified Data.List as List
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString.Lazy as LBS
-
-(.==) :: Text -> Value -> (Text, Value)
-(.==) = (,)
-
-fromJSONMay :: FromJSON a => JSON.Value -> Maybe a
-fromJSONMay val =
-    case JSON.fromJSON val of
-        JSON.Error _ -> Nothing
-        JSON.Success x -> Just x
 
 routeResources :: [(Text, [Text] -> Application)] -> [Text] -> Application
 routeResources resources parentPath request respond = do
@@ -84,19 +82,6 @@ routeResources resources parentPath request respond = do
                 Just handler -> do
                     let request' = request { pathInfo = rest }
                     handler parentPath request' respond
-
-hateoasWrap :: [(Text, Text)] -> Value -> Value
-hateoasWrap links JSON.Null =
-    hateoasWrap links (JSON.object [])
-hateoasWrap links (JSON.Object o) =
-    let JSON.Object p =
-            JSON.object
-                [ "links" .== JSON.object
-                    [ name .= value | (name, value) <- links ]
-                ]
-    in JSON.Object $ o <> p
-hateoasWrap links v =
-    hateoasWrap links $ JSON.object [ "value" .== v ]
 
 joinPath :: [Text] -> Text
 joinPath items = "/" <> (mconcat . List.intersperse "/" $ items)
@@ -325,80 +310,3 @@ multiHandler resource =
                 "DELETE" ->
                     handleDELETE resource parentPath request respond
                 _ -> respond methodNotAllowedResponse
-
-malformedInputResponse :: Response
-malformedInputResponse =
-    responseJSON
-        status400
-        []
-        (JSON.object
-            [ "error" .= (400 :: Int)
-            , "message" .== "Malformed Input"
-            ]
-        )
-
-deletedResponse :: Response
-deletedResponse =
-    responseLBS status204 [] ""
-
-conflictResponse :: Response
-conflictResponse =
-    responseJSON
-        status409
-        []
-        (JSON.object
-            [ "error" .= (409 :: Int)
-            , "message" .== "Conflict"
-            ]
-        )
-
-notFoundResponse :: Response
-notFoundResponse =
-    responseJSON
-        status404
-        []
-        (JSON.object
-            [ "error" .= (404 :: Int)
-            , "message" .== "Not Found"
-            ]
-        )
-
-methodNotAllowedResponse :: Response
-methodNotAllowedResponse =
-    responseJSON
-        status405
-        []
-        (JSON.object
-            [ "error" .= (405 :: Int)
-            , "message" .== "Method Not Allowed"
-            ]
-        )
-
-notAcceptableResponse :: Response
-notAcceptableResponse =
-    responseJSON
-        status406
-        []
-        (JSON.object
-            [ "error" .= (406 :: Int)
-            , "message" .== "Not Acceptable"
-            ]
-        )
-
-unsupportedMediaTypeResponse :: Response
-unsupportedMediaTypeResponse =
-    responseJSON
-        status415
-        []
-        (JSON.object
-            [ "error" .= (415 :: Int)
-            , "message" .== "Unsupported Media Type"
-            ]
-        )
-
-responseJSON :: ToJSON a => Status -> [Header] -> a -> Response
-responseJSON status headers val =
-    responseLBS
-        status
-        (("Content-Type", "application/json"):headers)
-        (JSON.encode val)

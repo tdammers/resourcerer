@@ -17,9 +17,12 @@ library
   hs-source-dirs: src
   exposed-modules: Web.Resourcerer
                  , Web.Resourcerer.Resource
+                 , Web.Resourcerer.Hateoas
                  , Web.Resourcerer.Serve
+                 , Web.Resourcerer.Serve.Responses
                  , Web.Resourcerer.Mime
                  , Web.Resourcerer.MultiDocument
+                 , Data.Aeson.Helpers
   build-depends: base >= 4.7 && < 5
                , aeson
                , bytestring
