@@ -2,8 +2,8 @@
 {-#LANGUAGE LambdaCase #-}
 module Web.Resourcerer.Serve
 ( routeResources
-, jsonHandler
 , multiHandler
+, jsonHandler
 )
 where
 
@@ -13,6 +13,7 @@ import Web.Resourcerer.Resource
         , StoreResult (..)
         , DeleteResult (..)
         , StoreResult (..)
+        , mapResource
         )
 import Web.Resourcerer.MultiDocument (MultiDocument (..), selectView)
 import Web.Resourcerer.Mime (MimeType (..))
@@ -55,6 +56,12 @@ import qualified Data.ByteString.Lazy as LBS
 
 (.==) :: Text -> Value -> (Text, Value)
 (.==) = (,)
+
+fromJSONMay :: FromJSON a => JSON.Value -> Maybe a
+fromJSONMay val =
+    case JSON.fromJSON val of
+        JSON.Error _ -> Nothing
+        JSON.Success x -> Just x
 
 routeResources :: [(Text, [Text] -> Application)] -> [Text] -> Application
 routeResources resources parentPath request respond = do
@@ -100,13 +107,6 @@ getResource actionMay buildResponse =
         Nothing -> return methodNotAllowedResponse
         Just action -> buildResponse <$> action
 
-buildJSONItemResponse :: ToJSON a => [Text] -> Resource b -> Text -> Maybe a -> Response
-buildJSONItemResponse _ _ _ Nothing =
-    notFoundResponse
-buildJSONItemResponse parentPath resource itemID (Just item) =
-    responseJSON status200 [] $
-        itemToJSON parentPath (collectionName resource) itemID item
-
 itemToJSON :: ToJSON a => [Text] -> Text -> Text -> a -> JSON.Value
 itemToJSON parentPath collectionName itemID item =
     hateoasWrap
@@ -114,11 +114,6 @@ itemToJSON parentPath collectionName itemID item =
             , ("parent", joinPath $ parentPath ++ [collectionName])
             ]
         $ toJSON item
-
-buildJSONCollectionResponse :: ToJSON a => [Text] -> Resource a -> [(Text, a)] -> Response
-buildJSONCollectionResponse parentPath resource items =
-    responseJSON status200 [("Content-type", "application/json")] $
-        itemsToJSON toJSON parentPath (collectionName resource) items
 
 buildMultiCollectionResponse :: [Text] -> Resource MultiDocument -> [(Text, MultiDocument)] -> Response
 buildMultiCollectionResponse parentPath resource items =
@@ -183,7 +178,7 @@ storeResultToResponse okResponse =
         StoreRejectedWrongType ->
             unsupportedMediaTypeResponse
         StoreRejectedMalformed ->
-            malformedJSONResponse
+            malformedInputResponse
         StoreRejectedExists ->
             conflictResponse
         StoreRejectedDoesNotExist ->
@@ -257,7 +252,7 @@ multiPOST resource parentPath request respond =
                 accepts = requestAccept request
                 docResult = multiFromRequestBody mimeType body
             case docResult of
-                Nothing -> respond malformedJSONResponse
+                Nothing -> respond malformedInputResponse
                 Just item -> do
                     storeResult <- create item
                     respond $ storeResultToResponse
@@ -278,7 +273,7 @@ multiPUT resource parentPath request respond =
                 accepts = requestAccept request
                 docResult = multiFromRequestBody mimeType body
             case docResult of
-                Nothing -> respond malformedJSONResponse
+                Nothing -> respond malformedInputResponse
                 Just item -> do
                     storeResult <- store itemID item
                     respond $ storeResultToResponse
@@ -288,67 +283,6 @@ multiPUT resource parentPath request respond =
                             parentPath
                             itemID item) storeResult
         ([], _) -> respond methodNotAllowedResponse
-        _ -> respond notFoundResponse
-
-jsonGET :: (FromJSON a, ToJSON a) => Resource a -> [Text] -> Application
-jsonGET resource parentPath request respond =
-    case pathInfo request of
-        [] -> respond =<< getResource
-                (listMay resource <*> pure def)
-                (buildJSONCollectionResponse parentPath resource)
-        [itemID] -> respond =<< getResource
-                        (findMay resource <*> pure itemID)
-                        (buildJSONItemResponse
-                            parentPath resource itemID)
-        _ -> respond notFoundResponse
-
-jsonPOST :: (FromJSON a, ToJSON a) => Resource a -> [Text] -> Application
-jsonPOST resource parentPath request respond =
-    case pathInfo request of
-        [] -> case createMay resource of
-            Nothing -> respond methodNotAllowedResponse
-            Just create -> do
-                body <- lazyRequestBody request
-                let parseResult = JSON.decode body
-                case parseResult of
-                    Nothing ->
-                        respond malformedJSONResponse
-                    Just item -> do
-                        storeResult <- create item
-                        respond $
-                            storeResultToResponse
-                                (\itemID ->
-                                    mapResponseStatus
-                                        (const status201) $
-                                    buildJSONItemResponse
-                                        parentPath
-                                        resource
-                                        itemID
-                                        (Just item))
-                                storeResult
-        [itemID] -> respond methodNotAllowedResponse
-        _ -> respond notFoundResponse
-
-jsonPUT :: (FromJSON a, ToJSON a) => Resource a -> [Text] -> Application
-jsonPUT resource parentPath request respond =
-    case pathInfo request of
-        [] -> respond methodNotAllowedResponse
-        [itemID] -> case storeMay resource of
-            Nothing -> respond methodNotAllowedResponse
-            Just store -> do
-                body <- lazyRequestBody request
-                let parseResult = JSON.decode body
-                case parseResult of
-                    Nothing ->
-                        respond malformedJSONResponse
-                    Just item -> do
-                        store itemID item >>= respond . storeResultToResponse
-                            (\itemID ->
-                                buildJSONItemResponse
-                                    parentPath
-                                    resource
-                                    itemID
-                                    (Just item))
         _ -> respond notFoundResponse
 
 handleDELETE :: Resource a -> [Text] -> Application
@@ -366,21 +300,14 @@ handleDELETE resource parentPath request respond =
         _ -> respond notFoundResponse
 
 jsonHandler :: (FromJSON a, ToJSON a) => Resource a -> (Text, [Text] -> Application)
-jsonHandler resource =
-    (collectionName resource, handler)
-    where
-        handler :: [Text] -> Application
-        handler parentPath request respond = do
-            case requestMethod request of
-                "GET" ->
-                    jsonGET resource parentPath request respond
-                "POST" ->
-                    jsonPOST resource parentPath request respond
-                "PUT" ->
-                    jsonPUT resource parentPath request respond
-                "DELETE" ->
-                    handleDELETE resource parentPath request respond
-                _ -> respond methodNotAllowedResponse
+jsonHandler =
+    multiHandler . mapResource multiFromJSON multiToJSON
+
+multiFromJSON :: ToJSON a => a -> MultiDocument
+multiFromJSON val = def { mdJSON = Just (toJSON val) }
+
+multiToJSON :: FromJSON a => MultiDocument -> Maybe a
+multiToJSON = (>>= fromJSONMay) . mdJSON
 
 multiHandler :: Resource MultiDocument -> (Text, [Text] -> Application)
 multiHandler resource =
@@ -399,14 +326,14 @@ multiHandler resource =
                     handleDELETE resource parentPath request respond
                 _ -> respond methodNotAllowedResponse
 
-malformedJSONResponse :: Response
-malformedJSONResponse =
+malformedInputResponse :: Response
+malformedInputResponse =
     responseJSON
         status400
         []
         (JSON.object
             [ "error" .= (400 :: Int)
-            , "message" .== "Malformed JSON"
+            , "message" .== "Malformed Input"
             ]
         )
 

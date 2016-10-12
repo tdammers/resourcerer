@@ -7,12 +7,16 @@ import Data.ByteString (ByteString)
 import Web.Resourcerer.Mime (MimeType)
 import qualified Web.Resourcerer.Mime as Mime
 import qualified Data.Aeson as JSON
+import Data.Default
 
 data MultiDocument =
     MultiDocument
         { mdJSON :: Maybe JSON.Value
         , mdViews :: [(MimeType, LBS.ByteString)]
         }
+
+instance Default MultiDocument where
+    def = MultiDocument Nothing []
 
 -- | @selectView accepts options@ selects the entry from 'options' whose MIME
 -- type matches the earliest entry in 'accepts', as per 'Mime.isMatch'.
