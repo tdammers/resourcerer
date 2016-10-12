@@ -155,8 +155,8 @@ getMulti accepts parentPath collectionName itemID multi =
         Nothing -> Nothing
         Just (mimeType, body) -> Just (mimeType, body)
 
-storeResultToResponse :: StoreResult
-                      -> (Text -> Status -> Response)
+storeResultToResponse :: StoreResult a
+                      -> (Text -> a -> Status -> Response)
                       -> Response
 storeResultToResponse result okResponse =
     case result of
@@ -168,13 +168,13 @@ storeResultToResponse result okResponse =
             conflictResponse
         StoreRejectedDoesNotExist ->
             notFoundResponse
-        Created itemID ->
-            okResponse itemID status201
-        Updated itemID ->
-            okResponse itemID status200
+        Created itemID item ->
+            okResponse itemID item status201
+        Updated itemID item ->
+            okResponse itemID item status200
 
-multiToResponse :: [MimeType] -> Resource MultiDocument -> [Text] -> MultiDocument -> Text -> Status -> Response
-multiToResponse accepts resource parentPath item itemID status =
+multiToResponse :: [MimeType] -> Resource MultiDocument -> [Text] -> Text -> MultiDocument -> Status -> Response
+multiToResponse accepts resource parentPath itemID item status =
     let viewMay = getMulti
             accepts
             parentPath
@@ -211,8 +211,8 @@ multiGET resource parentPath request respond = do
                                     accepts
                                     resource
                                     parentPath
-                                    item
                                     itemID
+                                    item
                                     status200
         _ -> respond notFoundResponse
 
@@ -243,11 +243,7 @@ multiPOST resource parentPath request respond =
                 Just item -> do
                     storeResult <- create item
                     respond . storeResultToResponse storeResult $
-                        multiToResponse
-                            accepts
-                            resource
-                            parentPath
-                            item
+                        multiToResponse accepts resource parentPath
         ([itemID], _) -> respond methodNotAllowedResponse
         _ -> respond notFoundResponse
 
@@ -264,11 +260,7 @@ multiPUT resource parentPath request respond =
                 Just item -> do
                     storeResult <- store itemID item
                     respond . storeResultToResponse storeResult $
-                        multiToResponse
-                            accepts
-                            resource
-                            parentPath
-                            item
+                        multiToResponse accepts resource parentPath
         ([], _) -> respond methodNotAllowedResponse
         _ -> respond notFoundResponse
 

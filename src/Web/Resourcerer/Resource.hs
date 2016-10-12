@@ -1,4 +1,5 @@
 {-#LANGUAGE OverloadedStrings #-}
+{-#LANGUAGE DeriveFunctor #-}
 module Web.Resourcerer.Resource
 where
 
@@ -19,15 +20,15 @@ instance Default ListSpec where
 
 type Identifier = Text
 
-data StoreResult = Created Identifier
-                 | Updated Identifier
-                 | StoreRejectedWrongType
-                 | StoreRejectedExists
-                 | StoreRejectedDoesNotExist
-                 | StoreRejectedMalformed
-                 deriving (Show, Read, Eq)
+data StoreResult a = Created Identifier a
+                   | Updated Identifier a
+                   | StoreRejectedWrongType
+                   | StoreRejectedExists
+                   | StoreRejectedDoesNotExist
+                   | StoreRejectedMalformed
+                   deriving (Show, Read, Eq, Functor)
 
-storeRejected :: StoreResult -> Bool
+storeRejected :: StoreResult a -> Bool
 storeRejected StoreRejectedWrongType = True
 storeRejected StoreRejectedExists = True
 storeRejected StoreRejectedDoesNotExist = True
@@ -49,7 +50,7 @@ class Rejectable a where
     accepted :: a -> Bool
     accepted = not . rejected
 
-instance Rejectable StoreResult where
+instance Rejectable (StoreResult a) where
     rejected = storeRejected
 
 instance Rejectable DeleteResult where
@@ -61,8 +62,8 @@ data Resource a =
         , findMay :: Maybe (Identifier -> IO (Maybe a))
         , listMay :: Maybe (ListSpec -> IO [(Identifier, a)])
         , subResourcesMay :: Maybe (Identifier -> IO (Resource a))
-        , createMay :: Maybe (a -> IO StoreResult) -- ^ create new, auto-generate ID
-        , storeMay :: Maybe (Identifier -> a -> IO StoreResult) -- ^ create or overwrite by ID
+        , createMay :: Maybe (a -> IO (StoreResult a)) -- ^ create new, auto-generate ID
+        , storeMay :: Maybe (Identifier -> a -> IO (StoreResult a)) -- ^ create or overwrite by ID
         , deleteMay :: Maybe (Identifier -> IO DeleteResult) -- ^ delete an item by ID
         }
 
@@ -99,11 +100,11 @@ mapResource encode decode r =
             Just create -> Just $ \x -> do
                 case decode x of
                     Nothing -> return StoreRejectedMalformed
-                    Just y -> create y
+                    Just y -> fmap encode <$> create y
         mappedStoreMay = case storeMay r of
             Nothing -> Nothing
             Just store -> Just $ \i x -> do
                 case decode x of
                     Nothing -> return StoreRejectedWrongType
-                    Just y -> store i y
+                    Just y -> fmap encode <$> store i y
         mappedDeleteMay = deleteMay r

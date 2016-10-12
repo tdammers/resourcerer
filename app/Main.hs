@@ -10,6 +10,7 @@ import System.Environment (lookupEnv)
 import Web.Resourcerer.Resource ( Resource (..)
                                 , StoreResult (..)
                                 , DeleteResult (..)
+                                , mapResource
                                 )
 import Web.Resourcerer.Serve (routeResources, jsonHandler, multiHandler)
 import Web.Resourcerer.MultiDocument
@@ -19,6 +20,7 @@ import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Aeson (toJSON, fromJSON)
 import qualified Data.Aeson as JSON
+import Data.Aeson.Helpers (fromJSONMay)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.ByteString.Lazy as LBS
@@ -27,7 +29,7 @@ import qualified Data.ByteString.Lazy.UTF8 as LUTF8
 textToLBS :: Text -> LBS.ByteString
 textToLBS = LUTF8.fromString . Text.unpack
 
-interpretMulti :: MultiDocument -> Either StoreResult MultiDocument
+interpretMulti :: MultiDocument -> Either (StoreResult MultiDocument) MultiDocument
 interpretMulti doc =
     case mdJSON doc of
         Just val ->
@@ -36,25 +38,25 @@ interpretMulti doc =
             case selectView ["text/plain"] (mdViews doc) of
                 Nothing -> Left StoreRejectedWrongType
                 Just (_, body) ->
-                    multiFromPlainText . Text.pack . LUTF8.toString $ body
+                    return . multiFromPlainText . Text.pack . LUTF8.toString $ body
 
-multiFromJSON :: JSON.Value -> Either StoreResult MultiDocument
+multiFromJSON :: JSON.Value -> Either (StoreResult MultiDocument) MultiDocument
 multiFromJSON val =
     case fromJSON val of
-        JSON.Success name -> multiFromPlainText name
+        JSON.Success name -> Right $ multiFromPlainText name
         JSON.Error _ -> Left StoreRejectedMalformed
 
-multiFromPlainText :: Text -> Either StoreResult MultiDocument
+multiFromPlainText :: Text -> MultiDocument
 multiFromPlainText str =
-    return MultiDocument
-            { mdJSON =
-                Just $ toJSON str
-            , mdViews =
-                [ ( "text/plain;charset=utf8"
-                  , LUTF8.fromString (Text.unpack str)
-                  )
-                ]
-            }
+    MultiDocument
+        { mdJSON =
+            Just $ toJSON str
+        , mdViews =
+            [ ( "text/plain;charset=utf8"
+              , LUTF8.fromString (Text.unpack str)
+              )
+            ]
+        }
 
 multiIdentifier :: MultiDocument -> Maybe Text
 multiIdentifier m = do
@@ -67,42 +69,29 @@ multiIdentifier m = do
 nameToIdentifier :: Text -> Text
 nameToIdentifier = Text.unwords . take 1 . Text.words . Text.toCaseFold
 
-testResource :: Text -> [(Text, MultiDocument)] -> IO (Resource MultiDocument)
+testResource :: Text -> [(Text, Text)] -> IO (Resource Text)
 testResource name items = do
     db <- newIORef (HashMap.fromList items)
     return def
         { collectionName = name
         , listMay = Just $ \_ -> HashMap.toList <$> readIORef db
         , findMay = Just $ \i -> HashMap.lookup i <$> readIORef db
-        , createMay = Just $ \rawVal -> do
-            let valEither = interpretMulti rawVal
-            case valEither of
-                Left result ->
-                    return result
-                Right val -> do
-                    let identMay = multiIdentifier val
-                    case identMay of
-                        Nothing -> return StoreRejectedMalformed
-                        Just i -> do
-                            atomicModifyIORef' db $ \items ->
-                                let oldVal = HashMap.lookup i items
-                                    items' = HashMap.insert i val items
-                                in case oldVal of
-                                    Nothing -> (items', Created i)
-                                    Just _ -> (items, StoreRejectedExists)
-        , storeMay = Just $ \i rawVal -> do
-            let valEither = interpretMulti rawVal
-            case valEither of
-                Left result ->
-                    return result
-                Right val ->
-                    atomicModifyIORef' db $ \items ->
-                        let oldVal = HashMap.lookup i items
-                            items' = HashMap.insert i val items
-                            result = case oldVal of
-                                Nothing -> Created i
-                                Just _ -> Updated i
-                        in (items', result)
+        , createMay = Just $ \val -> do
+            let i = nameToIdentifier val
+            atomicModifyIORef' db $ \items ->
+                let oldVal = HashMap.lookup i items
+                    items' = HashMap.insert i val items
+                in case oldVal of
+                    Nothing -> (items', Created i val)
+                    Just _ -> (items, StoreRejectedExists)
+        , storeMay = Just $ \i val -> do
+            atomicModifyIORef' db $ \items ->
+                let oldVal = HashMap.lookup i items
+                    items' = HashMap.insert i val items
+                    result = case oldVal of
+                        Nothing -> Created i val
+                        Just _ -> Updated i val
+                in (items', result)
         , deleteMay = Just $ \i ->
             atomicModifyIORef' db $ \items ->
                 let oldVal = HashMap.lookup i items
@@ -126,13 +115,20 @@ nameMulti name =
         [("text/plain", textToLBS name)
         ]
 
+nameFromMulti :: MultiDocument -> Maybe Text
+nameFromMulti (MultiDocument { mdJSON = Just json }) =
+    fromJSONMay json
+nameFromMulti (MultiDocument { mdViews = views }) =
+    Text.pack . LUTF8.toString . snd <$> selectView ["text/plain"] views
+
 main :: IO ()
 main = do
     resource <- testResource "items"
-                    [ ("john", nameMulti "John Doe")
-                    , ("jane", nameMulti "Jane Doe")
-                    , ("anna", nameMulti "Anna Andersson")
-                    , ("gabi", nameMulti "Gabi Mustermann")
+                    [ ("john", "John Doe")
+                    , ("jane", "Jane Doe")
+                    , ("anna", "Anna Andersson")
+                    , ("gabi", "Gabi Mustermann")
                     ]
+    let multiResource = mapResource nameMulti nameFromMulti resource
     port <- fromMaybe 5000 . fmap read <$> lookupEnv "PORT"
-    run port (app resource)
+    run port (app multiResource)
