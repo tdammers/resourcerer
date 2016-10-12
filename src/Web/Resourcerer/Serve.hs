@@ -31,13 +31,14 @@ import Web.Resourcerer.MultiDocument (MultiDocument (..), selectView)
 import Web.Resourcerer.Mime (MimeType (..))
 import Web.Resourcerer.Hateoas (hateoasWrap)
 import qualified Web.Resourcerer.Mime as Mime
-import qualified Data.Text
+import qualified Data.Text as Text
 import Data.Text (Text)
 import Network.Wai ( responseLBS
                    , requestMethod
                    , requestHeaders
                    , mapResponseStatus
                    , pathInfo
+                   , queryString
                    , lazyRequestBody
                    , Application
                    , Response (..)
@@ -64,7 +65,37 @@ import qualified Data.List as List
 import Data.List (find)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Lazy.UTF8 as LUTF8
+import qualified Data.ByteString.UTF8 as UTF8
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Control.Exception (throw, catch)
+import Control.Monad (join)
+import Data.SimpleParsers (parseInteger)
+
+class FromParam a where
+    fromParam :: ByteString -> Maybe a
+
+instance FromParam Integer where
+    fromParam = parseInteger . BS.unpack
+
+instance FromParam a => FromParam (Maybe a) where
+    fromParam = join . fromParam
+
+instance FromParam Text where
+    fromParam = Just . Text.pack . UTF8.toString
+
+requestParam :: FromParam a => ByteString -> Request -> Maybe a
+requestParam k req = do
+    raw <- join . lookup k $ queryString req
+    fromParam raw
+
+listSpecsFromRequest :: Request -> ListSpec
+listSpecsFromRequest req =
+    let ordering = fromMaybe [] $ Text.splitOn "," <$> requestParam "order" req
+        offset = fromMaybe 0 $ requestParam "offset" req
+        limit = requestParam "limit" req
+    in ListSpec ordering offset limit
 
 routeResources :: [(Text, [Text] -> Application)] -> [Text] -> Application
 routeResources resources parentPath request respond =
@@ -209,9 +240,10 @@ forwardToSubResource resource parentPath subHandler request respond = do
 multiGET :: Resource MultiDocument -> [Text] -> Application
 multiGET resource parentPath request respond = do
     let accepts = requestAccept request
+        listSpecs = listSpecsFromRequest request
     case pathInfo request of
         [] -> respond =<< getResource
-                (listMay resource <*> pure def)
+                (listMay resource <*> pure listSpecs)
                 (buildMultiCollectionResponse parentPath resource)
         [itemID] -> do
             let find = fromMaybe (throw NotFound) $ findMay resource

@@ -30,6 +30,7 @@ import Data.Word (Word8)
 import Data.Maybe (fromMaybe)
 import Data.Char (ord, chr, isAlphaNum, isSpace)
 import Data.String
+import Data.SimpleParsers
 
 -- | A MIME type, consisting of a type, subtype, and parameters.
 -- Type and subtype are represented as raw 'ByteString's, no attempts are made
@@ -75,11 +76,6 @@ getQ = fromMaybe 1 . (>>= parseDouble) . getParam "q"
 -- | Get a parameter from a MIME type.
 getParam :: ByteString -> MimeType -> Maybe ByteString
 getParam key = List.lookup key . mimeParams
-
-breakBS :: (Char -> Bool) -> ByteString -> (ByteString, ByteString)
-breakBS p s =
-    let (l, rem) = BS8.break p s
-    in (l, BS.drop 1 rem)
 
 -- | Parse a 'ByteString' into a 'MimeType'. No validation is performed, which
 -- means that the resulting MIME type may be invalid. Use 'parseV' to ensure
@@ -144,33 +140,7 @@ isMatch a b
     | mimeType a == mimeType b && isWildcard (mimeSubtype b) = True
     | mimeType a == mimeType b && mimeSubtype a == mimeSubtype b = True
     | otherwise = False
-
-parseDouble :: ByteString -> Maybe Double
-parseDouble bs = do
-    let (intstr, fracstr) = breakBS (== '.') bs
-    intpart <- parseIntpart 0 (BS.unpack intstr)
-    fracpart <- parseFracpart 10 (BS.unpack fracstr)
-    return $ intpart + fracpart
-
-parseIntpart :: Double -> [Word8] -> Maybe Double
-parseIntpart a [] = Just a
-parseIntpart a (x:xs) = do
-    d <- parseDigit x
-    let a' = d + a * 10
-    parseIntpart a' xs
-
-parseFracpart :: Double -> [Word8] -> Maybe Double
-parseFracpart f [] = Just 0
-parseFracpart f (x:xs) = do
-    d <- (/ f) <$> parseDigit x
-    a <- parseFracpart (f * 10) xs
-    return $ a + d
-
-parseDigit :: Word8 -> Maybe Double
-parseDigit x
-    | fromIntegral x >= ord '0' && fromIntegral x <= ord '9' = Just $ fromIntegral x - fromIntegral (ord '0')
-    | otherwise = Nothing
-
+--
 -- | Parses the value in an HTTP Accept header into a list of MIME types,
 -- sorted according to RFC 2616.
 parseAccept :: ByteString -> [MimeType]

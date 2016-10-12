@@ -75,7 +75,15 @@ testResource name items = do
     db <- newIORef (HashMap.fromList items)
     return def
         { collectionName = name
-        , listMay = Just $ \_ -> HashMap.toList <$> readIORef db
+        , listMay = Just $ \listSpec -> do
+            allItems <- HashMap.toList <$> readIORef db
+            let sortedItems = allItems
+                offset = fromIntegral $ listOffset listSpec
+                limit = fromMaybe (length sortedItems)
+                      . fmap fromIntegral
+                      $ listPageSize listSpec
+            return $ take limit . drop offset $ sortedItems
+
         , findMay = Just $ \i -> HashMap.lookup i <$> readIORef db
         , createMay = Just $ \val -> do
             let i = nameToIdentifier val

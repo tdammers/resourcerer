@@ -24,6 +24,7 @@ library
                  , Web.Resourcerer.Mime
                  , Web.Resourcerer.MultiDocument
                  , Data.Aeson.Helpers
+                 , Data.SimpleParsers
   build-depends: base >= 4.7 && < 5
                , aeson
                , bytestring
@@ -33,6 +34,7 @@ library
                , scientific
                , text
                , unordered-containers
+               , utf8-string
                , wai
   default-language: Haskell2010
 
