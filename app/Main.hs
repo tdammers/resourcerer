@@ -11,6 +11,7 @@ import Web.Resourcerer.Resource ( Resource (..)
                                 , StoreResult (..)
                                 , DeleteResult (..)
                                 , mapResource
+                                , ListSpec (..)
                                 )
 import Web.Resourcerer.Serve (routeResources, jsonHandler, multiHandler)
 import Web.Resourcerer.MultiDocument
@@ -102,31 +103,10 @@ testResource name items = do
                 in (items', result)
         }
 
-jsonTreeResource :: Text -> JSON.Value -> Resource JSON.Value
-jsonTreeResource name root =
-    def { collectionName = name
-        , listMay = Just $ \_ -> case root of
-                        JSON.Object o -> return (HashMap.toList o)
-                        _ -> return []
-        , findMay = Just $ \i -> case root of
-                        JSON.Object items -> return $ HashMap.lookup i items
-                        _ -> return Nothing
-        }
-
-settingsData = JSON.object
-    [ "username" .= ("someone" :: Text)
-    , "password" .= ("super secret" :: Text)
-    , "digits" .== JSON.object
-        [ "one" .= (1 :: Int)
-        , "two" .= (2 :: Int)
-        ]
-    ]
-
 app :: Resource MultiDocument -> Application
-app resource = 
+app resource =
     routeResources
         [ multiHandler resource
-        , jsonHandler $ jsonTreeResource "settings" settingsData
         ]
         []
 

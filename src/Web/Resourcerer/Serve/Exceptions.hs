@@ -4,6 +4,7 @@ where
 import Control.Exception
 
 data HttpException =
+  ClientError |
   MalformedInput |
   Conflict |
   NotFound |
