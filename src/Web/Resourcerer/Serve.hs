@@ -15,6 +15,7 @@ import Web.Resourcerer.Resource
         , StoreResult (..)
         , mapResource
         )
+import Web.Resourcerer.Serve.Exceptions (HttpException (..))
 import Web.Resourcerer.Serve.Responses
         ( malformedInputResponse
         , deletedResponse
@@ -24,6 +25,7 @@ import Web.Resourcerer.Serve.Responses
         , notAcceptableResponse
         , unsupportedMediaTypeResponse
         , responseJSON
+        , exceptionResponse
         )
 import Web.Resourcerer.MultiDocument (MultiDocument (..), selectView)
 import Web.Resourcerer.Mime (MimeType (..))
@@ -40,6 +42,7 @@ import Network.Wai ( responseLBS
                    , Application
                    , Response (..)
                    , Request
+                   , ResponseReceived
                    )
 import Network.HTTP.Types ( Status
                           , status200
@@ -60,28 +63,36 @@ import Data.Monoid ( (<>) )
 import qualified Data.List as List
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString.Lazy as LBS
+import Control.Exception (throw, catch)
 
 routeResources :: [(Text, [Text] -> Application)] -> [Text] -> Application
-routeResources resources parentPath request respond = do
-    case pathInfo request of
-        [] -> respond $ responseJSON
-                status200
-                []
-                [ JSON.object
-                    [ "collections" .=
-                        [ hateoasWrap
-                            [("self", joinPath (parentPath ++ [name]))] $
-                            JSON.object [ "name" .= name ]
-                        | (name, _) <- resources
+routeResources resources parentPath request respond =
+    go `catch` handle
+    where
+        handle :: HttpException -> IO ResponseReceived
+        handle e = respond $ exceptionResponse e
+
+        go :: IO ResponseReceived
+        go = do
+            case pathInfo request of
+                [] -> respond $ responseJSON
+                        status200
+                        []
+                        [ JSON.object
+                            [ "collections" .=
+                                [ hateoasWrap
+                                    [("self", joinPath (parentPath ++ [name]))] $
+                                    JSON.object [ "name" .= name ]
+                                | (name, _) <- resources
+                                ]
+                            ]
                         ]
-                    ]
-                ]
-        (ident:rest) -> do
-            case lookup ident resources of
-                Nothing -> respond notFoundResponse
-                Just handler -> do
-                    let request' = request { pathInfo = rest }
-                    handler parentPath request' respond
+                (ident:rest) -> do
+                    case lookup ident resources of
+                        Nothing -> throw NotFound
+                        Just handler -> do
+                            let request' = request { pathInfo = rest }
+                            handler parentPath request' respond
 
 joinPath :: [Text] -> Text
 joinPath items = "/" <> (mconcat . List.intersperse "/" $ items)
@@ -155,23 +166,13 @@ getMulti accepts parentPath collectionName itemID multi =
         Nothing -> Nothing
         Just (mimeType, body) -> Just (mimeType, body)
 
-storeResultToResponse :: StoreResult a
-                      -> (Text -> a -> Status -> Response)
-                      -> Response
-storeResultToResponse result okResponse =
-    case result of
-        StoreRejectedWrongType ->
-            unsupportedMediaTypeResponse
-        StoreRejectedMalformed ->
-            malformedInputResponse
-        StoreRejectedExists ->
-            conflictResponse
-        StoreRejectedDoesNotExist ->
-            notFoundResponse
-        Created itemID item ->
-            okResponse itemID item status201
-        Updated itemID item ->
-            okResponse itemID item status200
+checkStoreResult :: StoreResult a -> (Text, a, Status)
+checkStoreResult StoreRejectedWrongType = throw UnsupportedMediaType
+checkStoreResult StoreRejectedMalformed = throw MalformedInput
+checkStoreResult StoreRejectedExists = throw Conflict
+checkStoreResult StoreRejectedDoesNotExist = throw NotFound
+checkStoreResult (Created itemID item) = (itemID, item, status201)
+checkStoreResult (Updated itemID item) = (itemID, item, status200)
 
 multiToResponse :: [MimeType] -> Resource MultiDocument -> [Text] -> Text -> MultiDocument -> Status -> Response
 multiToResponse accepts resource parentPath itemID item status =
@@ -181,14 +182,11 @@ multiToResponse accepts resource parentPath itemID item status =
             (collectionName resource)
             itemID
             item
-    in case viewMay of
-        Nothing ->
-            notAcceptableResponse
-        Just (mimeType, body) ->
-            responseLBS
-                status
-                [("Content-type", Mime.pack mimeType)]
-                body
+        (mimeType, body) = fromMaybe (throw NotAcceptable) viewMay
+    in responseLBS
+        status
+        [("Content-type", Mime.pack mimeType)]
+        body
 
 multiGET :: Resource MultiDocument -> [Text] -> Application
 multiGET resource parentPath request respond = do
@@ -198,25 +196,19 @@ multiGET resource parentPath request respond = do
                 (listMay resource <*> pure def)
                 (buildMultiCollectionResponse parentPath resource)
         [itemID] -> do
-            case findMay resource <*> pure itemID of
-                Nothing -> respond notFoundResponse
-                Just find -> do
-                    itemMay <- find
-                    case itemMay of
-                        Nothing ->
-                            respond notFoundResponse
-                        Just item ->
-                            respond $
-                                multiToResponse
-                                    accepts
-                                    resource
-                                    parentPath
-                                    itemID
-                                    item
-                                    status200
-        _ -> respond notFoundResponse
+            let find = fromMaybe (throw NotFound) $ findMay resource
+            item <- fromMaybe (throw NotFound) <$> find itemID
+            respond $
+                multiToResponse
+                    accepts
+                    resource
+                    parentPath
+                    itemID
+                    item
+                    status200
+        _ -> throw NotFound
 
-multiFromRequestBody :: MimeType -> LBS.ByteString -> Maybe MultiDocument
+multiFromRequestBody :: MimeType -> LBS.ByteString -> MultiDocument
 multiFromRequestBody mimeType body =
     if Mime.isMatch mimeType "text/json" ||
        Mime.isMatch mimeType "application/json"
@@ -224,11 +216,10 @@ multiFromRequestBody mimeType body =
             let parseResult :: Maybe JSON.Value
                 parseResult = JSON.decode body
             in case parseResult of
-                Nothing -> Nothing
-                Just jsonItem ->
-                    Just $ MultiDocument (Just jsonItem) []
+                Nothing -> throw MalformedInput
+                Just jsonItem -> MultiDocument (Just jsonItem) []
         else
-            Just $ MultiDocument Nothing [(mimeType, body)]
+            MultiDocument Nothing [(mimeType, body)]
 
 multiPOST :: Resource MultiDocument -> [Text] -> Application
 multiPOST resource parentPath request respond =
@@ -237,15 +228,13 @@ multiPOST resource parentPath request respond =
             body <- lazyRequestBody request
             let mimeType = requestType request
                 accepts = requestAccept request
-                docResult = multiFromRequestBody mimeType body
-            case docResult of
-                Nothing -> respond malformedInputResponse
-                Just item -> do
-                    storeResult <- create item
-                    respond . storeResultToResponse storeResult $
-                        multiToResponse accepts resource parentPath
-        ([itemID], _) -> respond methodNotAllowedResponse
-        _ -> respond notFoundResponse
+                item = multiFromRequestBody mimeType body
+            storeResult <- create item
+            let (itemID, item, status) = checkStoreResult storeResult
+            respond $ multiToResponse
+                accepts resource parentPath itemID item status
+        ([itemID], _) -> throw MethodNotAllowed
+        _ -> throw NotFound
 
 multiPUT :: Resource MultiDocument -> [Text] -> Application
 multiPUT resource parentPath request respond =
@@ -254,29 +243,25 @@ multiPUT resource parentPath request respond =
             body <- lazyRequestBody request
             let mimeType = requestType request
                 accepts = requestAccept request
-                docResult = multiFromRequestBody mimeType body
-            case docResult of
-                Nothing -> respond malformedInputResponse
-                Just item -> do
-                    storeResult <- store itemID item
-                    respond . storeResultToResponse storeResult $
-                        multiToResponse accepts resource parentPath
-        ([], _) -> respond methodNotAllowedResponse
-        _ -> respond notFoundResponse
+                item = multiFromRequestBody mimeType body
+            storeResult <- store itemID item
+            let (itemID, item, status) = checkStoreResult storeResult
+            respond $ multiToResponse
+                accepts resource parentPath itemID item status
+        ([], _) -> throw MethodNotAllowed
+        _ -> throw NotFound
 
-handleDELETE :: Resource a -> [Text] -> Application
-handleDELETE resource parentPath request respond =
+multiDELETE :: Resource a -> [Text] -> Application
+multiDELETE resource parentPath request respond =
     case pathInfo request of
-        [] -> respond methodNotAllowedResponse
-        [itemID] -> case deleteMay resource of
-            Nothing -> respond methodNotAllowedResponse
-            Just delete -> do
-                result <- delete itemID
-                case result of
-                    Deleted -> respond deletedResponse
-                    NothingToDelete -> respond notFoundResponse
-                    DeleteRejected -> respond conflictResponse
-        _ -> respond notFoundResponse
+        [] -> throw MethodNotAllowed
+        [itemID] -> do
+            let delete = fromMaybe (throw MethodNotAllowed) $ deleteMay resource
+            delete itemID >>= \case
+                NothingToDelete -> throw NotFound
+                DeleteRejected -> throw Conflict
+                Deleted -> respond deletedResponse
+        _ -> throw NotFound
 
 jsonHandler :: (FromJSON a, ToJSON a) => Resource a -> (Text, [Text] -> Application)
 jsonHandler =
@@ -302,5 +287,5 @@ multiHandler resource =
                 "PUT" ->
                     multiPUT resource parentPath request respond
                 "DELETE" ->
-                    handleDELETE resource parentPath request respond
+                    multiDELETE resource parentPath request respond
                 _ -> respond methodNotAllowedResponse

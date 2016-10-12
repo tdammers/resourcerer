@@ -19,6 +19,7 @@ library
                  , Web.Resourcerer.Resource
                  , Web.Resourcerer.Hateoas
                  , Web.Resourcerer.Serve
+                 , Web.Resourcerer.Serve.Exceptions
                  , Web.Resourcerer.Serve.Responses
                  , Web.Resourcerer.Mime
                  , Web.Resourcerer.MultiDocument

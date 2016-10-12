@@ -32,6 +32,15 @@ import Data.Aeson ( Value
 import qualified Data.Aeson as JSON
 import Data.Aeson.Helpers ( (.==) )
 import qualified Data.Aeson.Helpers as JSON
+import Web.Resourcerer.Serve.Exceptions (HttpException (..))
+
+exceptionResponse :: HttpException -> Response
+exceptionResponse MalformedInput = malformedInputResponse
+exceptionResponse Conflict = conflictResponse
+exceptionResponse NotFound = notFoundResponse
+exceptionResponse MethodNotAllowed = methodNotAllowedResponse
+exceptionResponse NotAcceptable = notAcceptableResponse
+exceptionResponse UnsupportedMediaType = unsupportedMediaTypeResponse
 
 malformedInputResponse :: Response
 malformedInputResponse =
