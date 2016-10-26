@@ -88,10 +88,13 @@ serveNode :: Resource -> [MimeType] -> [Text] -> Application
 serveNode resource [] parentPath request respond =
     throw NotAcceptable
 serveNode resource (accept:accepts) parentPath request respond = do
-    bodyMay <- getBody resource accept parentPath
-    case bodyMay of
-        Nothing -> serveNode resource accepts parentPath request respond
-        Just body -> respond . typedResponse $ body
+    case requestMethod request of
+        "GET" -> do
+            bodyMay <- getBody resource accept parentPath
+            case bodyMay of
+                Nothing -> serveNode resource accepts parentPath request respond
+                Just body -> respond . typedResponse $ body
+        _ -> throw MethodNotAllowed
 
 serveChildNode :: Resource -> [MimeType] -> Text -> [Text] -> Application
 serveChildNode resource accepts name parentPath request respond = do
