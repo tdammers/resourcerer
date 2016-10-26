@@ -5,7 +5,11 @@ where
 
 import qualified Data.Text
 import Data.Text (Text)
+import qualified Data.ByteString.Lazy as LBS
 import Data.Default (Default (..))
+import Web.Resourcerer.Mime (MimeType)
+import qualified Web.Resourcerer.Mime as Mime
+import qualified Data.Aeson as JSON
 
 data ListSpec =
     ListSpec
@@ -20,91 +24,73 @@ instance Default ListSpec where
 
 type Identifier = Text
 
-data StoreResult a = Created Identifier a
-                   | Updated Identifier a
-                   | StoreRejectedWrongType
-                   | StoreRejectedExists
-                   | StoreRejectedDoesNotExist
-                   | StoreRejectedMalformed
-                   deriving (Show, Read, Eq, Functor)
+type StructuredBody = JSON.Value
 
-storeRejected :: StoreResult a -> Bool
-storeRejected StoreRejectedWrongType = True
-storeRejected StoreRejectedExists = True
-storeRejected StoreRejectedDoesNotExist = True
-storeRejected StoreRejectedMalformed = True
-storeRejected _ = False
+type DigestBody = JSON.Value
 
-data DeleteResult = Deleted
-                  | NothingToDelete
-                  | DeleteRejected
-                  deriving (Show, Read, Eq, Enum)
-
-deleteRejected :: DeleteResult -> Bool
-deleteRejected DeleteRejected = True
-deleteRejected _ = False
-
-class Rejectable a where
-    rejected :: a -> Bool
-    rejected = not . accepted
-    accepted :: a -> Bool
-    accepted = not . rejected
-
-instance Rejectable (StoreResult a) where
-    rejected = storeRejected
-
-instance Rejectable DeleteResult where
-    rejected = deleteRejected
-
-data Resource a =
-    Resource
-        { collectionName :: Text
-        , findMay :: Maybe (Identifier -> IO (Maybe a))
-        , listMay :: Maybe (ListSpec -> IO [(Identifier, a)])
-        , subResourcesMay :: Maybe (Identifier -> IO [Resource a])
-        , createMay :: Maybe (a -> IO (StoreResult a)) -- ^ create new, auto-generate ID
-        , storeMay :: Maybe (Identifier -> a -> IO (StoreResult a)) -- ^ create or overwrite by ID
-        , deleteMay :: Maybe (Identifier -> IO DeleteResult) -- ^ delete an item by ID
+data TypedBody =
+    TypedBody
+        { bodyType :: MimeType
+        , bodyData :: LBS.ByteString
         }
 
-instance Default (Resource a) where
-    def =
-        Resource
-            { collectionName = ""
-            , findMay = Nothing
-            , listMay = Nothing
-            , subResourcesMay = Nothing
-            , createMay = Nothing
-            , storeMay = Nothing
-            , deleteMay = Nothing
-            }
+data Body =
+    BodyTyped TypedBody |
+    BodyStructured StructuredBody
 
-mapResource :: (a -> b) -> (b -> Maybe a) -> Resource a -> Resource b
-mapResource encode decode r =
+data StoreResult =
+    StoreFailedUnsupportedMediaType |
+    StoreFailedMalformed |
+    StoreFailedExists |
+    StoreFailedMethodNotAllowed |
+    Created Identifier |
+    Updated Identifier
+    deriving (Show)
+
+data DeleteResult =
+    DeleteFailedDoesNotExist |
+    DeleteFailedMethodNotAllowed |
+    Deleted
+    deriving (Show)
+
+data Resource =
     Resource
-        mappedCollectionName
-        mappedFindMay
-        mappedListMay
-        mappedSubResourcesMay
-        mappedCreateMay
-        mappedStoreMay
-        mappedDeleteMay
-    where
-        mappedCollectionName = collectionName r
+        { getStructuredBody :: IO StructuredBody
+        , getTypedBody :: MimeType -> IO (Maybe TypedBody)
+        , getDigestBody :: IO DigestBody
+        , listChildren :: ListSpec -> IO [(Identifier, Resource)]
+        , getChild :: Identifier -> IO (Maybe Resource)
+        , storeStructuredDocument :: Identifier -> StructuredBody -> IO StoreResult
+        , storeTypedDocument :: Identifier -> TypedBody -> IO StoreResult
+        , createStructuredDocument :: StructuredBody -> IO StoreResult
+        , createTypedDocument :: TypedBody -> IO StoreResult
+        , deleteDocument :: Identifier -> IO DeleteResult
+        }
 
-        mappedFindMay = (fmap . fmap . fmap . fmap $ encode) $ findMay r
-        mappedListMay = (fmap . fmap . fmap . fmap . fmap $ encode) $ listMay r
-        mappedSubResourcesMay = (fmap . fmap . fmap . fmap . fmap $ mapResource encode decode) subResourcesMay r
-        mappedCreateMay = case createMay r of
-            Nothing -> Nothing
-            Just create -> Just $ \x -> do
-                case decode x of
-                    Nothing -> return StoreRejectedMalformed
-                    Just y -> fmap encode <$> create y
-        mappedStoreMay = case storeMay r of
-            Nothing -> Nothing
-            Just store -> Just $ \i x -> do
-                case decode x of
-                    Nothing -> return StoreRejectedWrongType
-                    Just y -> fmap encode <$> store i y
-        mappedDeleteMay = deleteMay r
+defResource :: Resource
+defResource =
+    Resource
+        { getStructuredBody = return JSON.Null
+        , getTypedBody = const $ return Nothing
+        , getDigestBody = return JSON.Null
+        , listChildren = const $ return []
+        , getChild = const $ return Nothing
+        , storeStructuredDocument = const . const . return $ StoreFailedMethodNotAllowed
+        , storeTypedDocument = const . const . return $ StoreFailedMethodNotAllowed
+        , createStructuredDocument = const . return $ StoreFailedMethodNotAllowed
+        , createTypedDocument = const . return $ StoreFailedMethodNotAllowed
+        , deleteDocument = const . return $ DeleteFailedMethodNotAllowed
+        }
+
+mount :: Text -> Resource -> Resource -> Resource
+mount name child parent =
+    parent
+        { getChild = \childName ->
+            if name == childName
+                then return (Just child)
+                else  getChild parent childName
+        , listChildren = \spec -> do
+            origChildren <- listChildren parent spec
+            return . maybe id (take . fromIntegral) (listPageSize spec) $
+                origChildren ++ [(name, child)]
+        }

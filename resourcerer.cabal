@@ -22,7 +22,6 @@ library
                  , Web.Resourcerer.Serve.Exceptions
                  , Web.Resourcerer.Serve.Responses
                  , Web.Resourcerer.Mime
-                 , Web.Resourcerer.MultiDocument
                  , Data.Aeson.Helpers
                  , Data.SimpleParsers
   build-depends: base >= 4.7 && < 5
