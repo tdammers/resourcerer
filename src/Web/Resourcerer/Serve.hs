@@ -72,7 +72,7 @@ resourceToApplication resource request respond = do
     serveResource resource accepts [] request respond
 
 serveResource :: Resource -> [MimeType] -> [Text] -> Application
-serveResource resource accepts parentPath request respond =
+serveResource resource accepts parentPath request respond = do
     go `catch` handle
     where
         handle :: HttpException -> IO ResponseReceived
@@ -99,7 +99,7 @@ serveChildNode resource accepts name parentPath request respond = do
     let newRequest = request { pathInfo = tail (pathInfo request) }
     case childMay of
         Nothing -> throw NotFound
-        Just child -> serveNode child accepts (parentPath ++ [name]) newRequest respond
+        Just child -> serveResource child accepts (parentPath ++ [name]) newRequest respond
 
 getBody :: Resource -> MimeType -> [Text] -> IO (Maybe TypedBody)
 getBody resource accept parentPath = go bodyGetters
