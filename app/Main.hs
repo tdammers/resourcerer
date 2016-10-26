@@ -10,10 +10,10 @@ import System.Environment (lookupEnv)
 import Web.Resourcerer.Resource ( Resource (..)
                                 , StoreResult (..)
                                 , DeleteResult (..)
-                                , mapResource
+                                , defResource
+                                , mount
                                 )
-import Web.Resourcerer.Serve (routeResources, jsonHandler, multiHandler)
-import Web.Resourcerer.MultiDocument
+import Web.Resourcerer.Serve (resourceToApplication)
 import Data.Default (def)
 import Data.IORef
 import Data.HashMap.Strict (HashMap)
@@ -29,128 +29,12 @@ import qualified Data.ByteString.Lazy.UTF8 as LUTF8
 textToLBS :: Text -> LBS.ByteString
 textToLBS = LUTF8.fromString . Text.unpack
 
-interpretMulti :: MultiDocument -> Either (StoreResult MultiDocument) MultiDocument
-interpretMulti doc =
-    case mdJSON doc of
-        Just val ->
-            multiFromJSON val
-        Nothing ->
-            case selectView ["text/plain"] (mdViews doc) of
-                Nothing -> Left StoreRejectedWrongType
-                Just (_, body) ->
-                    return . multiFromPlainText . Text.pack . LUTF8.toString $ body
-
-multiFromJSON :: JSON.Value -> Either (StoreResult MultiDocument) MultiDocument
-multiFromJSON val =
-    case fromJSON val of
-        JSON.Success name -> Right $ multiFromPlainText name
-        JSON.Error _ -> Left StoreRejectedMalformed
-
-multiFromPlainText :: Text -> MultiDocument
-multiFromPlainText str =
-    MultiDocument
-        { mdJSON =
-            Just $ toJSON str
-        , mdViews =
-            [ ( "text/plain;charset=utf8"
-              , LUTF8.fromString (Text.unpack str)
-              )
-            ]
-        }
-
-multiIdentifier :: MultiDocument -> Maybe Text
-multiIdentifier m = do
-    json <- mdJSON m
-    name <- case fromJSON json of
-        JSON.Error _ -> Nothing
-        JSON.Success a -> return a
-    return $ nameToIdentifier name
-
-nameToIdentifier :: Text -> Text
-nameToIdentifier = Text.unwords . take 1 . Text.words . Text.toCaseFold
-
-testResource :: Text -> [(Text, Text)] -> IO (Resource Text)
-testResource name items = do
-    db <- newIORef (HashMap.fromList items)
-    return def
-        { collectionName = name
-        , listMay = Just $ \_ -> HashMap.toList <$> readIORef db
-        , findMay = Just $ \i -> HashMap.lookup i <$> readIORef db
-        , createMay = Just $ \val -> do
-            let i = nameToIdentifier val
-            atomicModifyIORef' db $ \items ->
-                let oldVal = HashMap.lookup i items
-                    items' = HashMap.insert i val items
-                in case oldVal of
-                    Nothing -> (items', Created i val)
-                    Just _ -> (items, StoreRejectedExists)
-        , storeMay = Just $ \i val -> do
-            atomicModifyIORef' db $ \items ->
-                let oldVal = HashMap.lookup i items
-                    items' = HashMap.insert i val items
-                    result = case oldVal of
-                        Nothing -> Created i val
-                        Just _ -> Updated i val
-                in (items', result)
-        , deleteMay = Just $ \i ->
-            atomicModifyIORef' db $ \items ->
-                let oldVal = HashMap.lookup i items
-                    items' = HashMap.delete i items
-                    result = case oldVal of
-                        Nothing -> NothingToDelete
-                        Just _ -> Deleted
-                in (items', result)
-        }
-
-jsonTreeResource :: Text -> JSON.Value -> Resource JSON.Value
-jsonTreeResource name root =
-    def { collectionName = name
-        , listMay = Just $ \_ -> case root of
-                        JSON.Object o -> return (HashMap.toList o)
-                        _ -> return []
-        , findMay = Just $ \i -> case root of
-                        JSON.Object items -> return $ HashMap.lookup i items
-                        _ -> return Nothing
-        }
-
-settingsData = JSON.object
-    [ "username" .= ("someone" :: Text)
-    , "password" .= ("super secret" :: Text)
-    , "digits" .== JSON.object
-        [ "one" .= (1 :: Int)
-        , "two" .= (2 :: Int)
-        ]
-    ]
-
-app :: Resource MultiDocument -> Application
-app resource = 
-    routeResources
-        [ multiHandler resource
-        , jsonHandler $ jsonTreeResource "settings" settingsData
-        ]
-        []
-
-nameMulti :: Text -> MultiDocument
-nameMulti name =
-    MultiDocument
-        (Just $ toJSON name)
-        [("text/plain", textToLBS name)
-        ]
-
-nameFromMulti :: MultiDocument -> Maybe Text
-nameFromMulti (MultiDocument { mdJSON = Just json }) =
-    fromJSONMay json
-nameFromMulti (MultiDocument { mdViews = views }) =
-    Text.pack . LUTF8.toString . snd <$> selectView ["text/plain"] views
+testResource :: IO Resource
+testResource = do
+    return $ mount "things" defResource defResource
 
 main :: IO ()
 main = do
-    resource <- testResource "items"
-                    [ ("john", "John Doe")
-                    , ("jane", "Jane Doe")
-                    , ("anna", "Anna Andersson")
-                    , ("gabi", "Gabi Mustermann")
-                    ]
-    let multiResource = mapResource nameMulti nameFromMulti resource
+    resource <- testResource
     port <- fromMaybe 5000 . fmap read <$> lookupEnv "PORT"
-    run port (app multiResource)
+    run port (resourceToApplication resource)
