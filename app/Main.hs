@@ -57,7 +57,14 @@ makeFruitResource fruit = do
     return $ defResource
         { listChildren = listIORef fruitRef
         , getChild = getIORef fruitRef
+        , storeStructuredDocument = storeFruit fruitRef
         }
+
+storeFruit :: IORef (HashMap Text Fruit) -> Text -> JSON.Value -> IO StoreResult
+storeFruit fruitRef name json = do
+    case JSON.fromJSON json of
+        JSON.Success fruit -> putIORef fruitRef name fruit
+        JSON.Error err -> return StoreFailedMalformed
 
 listIORef :: IORef (HashMap Text Fruit) -> ListSpec -> IO [(Text, Resource)]
 listIORef fruit spec =
@@ -66,6 +73,11 @@ listIORef fruit spec =
 getIORef :: IORef (HashMap Text Fruit) -> Text -> IO (Maybe Resource)
 getIORef fruit name =
     fmap fruitResource . HashMap.lookup name <$> readIORef fruit
+
+putIORef :: IORef (HashMap Text Fruit) -> Text -> Fruit -> IO StoreResult
+putIORef fruit name item = do
+    modifyIORef fruit $ HashMap.insert name item
+    return $ Updated name
 
 makeRootResource :: IO Resource
 makeRootResource = do
