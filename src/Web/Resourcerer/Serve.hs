@@ -1,3 +1,4 @@
+{-#LANGUAGE NoImplicitPrelude #-}
 {-#LANGUAGE OverloadedStrings #-}
 {-#LANGUAGE LambdaCase #-}
 module Web.Resourcerer.Serve
@@ -5,6 +6,7 @@ module Web.Resourcerer.Serve
 )
 where
 
+import Praglude
 import Web.Resourcerer.Resource
         ( Resource (..)
         , ListSpec (..)
@@ -30,8 +32,6 @@ import Web.Resourcerer.Serve.Responses
 import Web.Resourcerer.Hateoas (hateoasWrap)
 import Web.Resourcerer.Mime (MimeType (..))
 import qualified Web.Resourcerer.Mime as Mime
-import qualified Data.Text as Text
-import Data.Text (Text)
 import Network.Wai ( responseLBS
                    , requestMethod
                    , requestHeaders
@@ -50,30 +50,15 @@ import Network.HTTP.Types ( Status
                           , status204
                           , Header
                           )
-import Data.Aeson ( Value
-                  , ToJSON (..)
-                  , FromJSON (..)
-                  , (.=)
-                  )
 import qualified Data.Aeson as JSON
-import Data.Aeson.Helpers ( (.==), fromJSONMay )
 import qualified Data.Aeson.Helpers as JSON
-import Data.Default (def)
-import Data.Monoid ( (<>) )
-import qualified Data.List as List
-import Data.List (find)
-import Data.Maybe (fromMaybe, catMaybes)
-import qualified Data.ByteString.Lazy as LBS
+import Data.Aeson.Helpers ( (.==), fromJSONMay )
 import qualified Data.ByteString.Lazy.UTF8 as LUTF8
 import qualified Data.ByteString.UTF8 as UTF8
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import Control.Exception (throw, catch)
-import Control.Applicative ( (<|>) )
 
 resourceToApplication :: Resource -> Application
 resourceToApplication resource request respond = do
-    let accepts = Mime.parseAccept . fromMaybe "*/*" . lookup "Accept" . requestHeaders $ request
+    let accepts = Mime.parseAccept . fromMaybe "*/*" . lookup "Accept" . AList . requestHeaders $ request
     serveResource resource accepts [] request respond
 
 serveResource :: Resource -> [MimeType] -> [Text] -> Application
@@ -135,17 +120,17 @@ structuredBodyGetter resource accept parentPath = do
     let prepareChild :: (Text, Resource) -> IO (Text, JSON.Value)
         prepareChild (name, childResource) = do
             let links =
-                    [ ("_self", joinPath (parentPath ++ [name]))
-                    , ("_parent", joinPath parentPath)
+                    [ ("_self", joinUrlPath (parentPath ++ [name]))
+                    , ("_parent", joinUrlPath parentPath)
                     ]
             childBody <- getDigestBody childResource
             return (name, hateoasWrap links childBody)
     children <- mapM prepareChild childResources
     let links = catMaybes
-            [ Just ("_self", joinPath parentPath)
+            [ Just ("_self", joinUrlPath parentPath)
             , if null parentPath
                 then Nothing
-                else Just ("_parent", joinPath . init $ parentPath)
+                else Just ("_parent", joinUrlPath . init $ parentPath)
             ]
         body =
             JSON.assoc "_children" (JSON.object children) .
@@ -189,5 +174,5 @@ typedResponse body =
         (("Content-Type", Mime.pack (bodyType body)):[])
         (bodyData body)
 
-joinPath :: [Text] -> Text
-joinPath = ("/" <>) . Text.intercalate "/"
+joinUrlPath :: [Text] -> Text
+joinUrlPath = ("/" <>) . intercalate "/"

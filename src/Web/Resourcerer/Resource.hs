@@ -1,12 +1,10 @@
+{-#LANGUAGE NoImplicitPrelude #-}
 {-#LANGUAGE OverloadedStrings #-}
 {-#LANGUAGE DeriveFunctor #-}
 module Web.Resourcerer.Resource
 where
 
-import qualified Data.Text
-import Data.Text (Text)
-import qualified Data.ByteString.Lazy as LBS
-import Data.Default (Default (..))
+import Praglude
 import Web.Resourcerer.Mime (MimeType)
 import qualified Web.Resourcerer.Mime as Mime
 import qualified Data.Aeson as JSON
@@ -31,7 +29,7 @@ type DigestBody = JSON.Value
 data TypedBody =
     TypedBody
         { bodyType :: MimeType
-        , bodyData :: LBS.ByteString
+        , bodyData :: LByteString
         }
 
 data Body =

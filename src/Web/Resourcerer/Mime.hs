@@ -1,3 +1,4 @@
+{-#LANGUAGE NoImplicitPrelude #-}
 {-#LANGUAGE OverloadedStrings #-}
 module Web.Resourcerer.Mime
 ( 
@@ -21,15 +22,12 @@ module Web.Resourcerer.Mime
 )
 where
 
+import Praglude
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString as BS
-import Data.ByteString (ByteString)
 import Data.Monoid
 import qualified Data.List as List
 import Data.Word (Word8)
-import Data.Maybe (fromMaybe)
-import Data.Char (ord, chr, isAlphaNum, isSpace)
-import Data.String
 import Data.SimpleParsers
 
 -- | A MIME type, consisting of a type, subtype, and parameters.

@@ -25,6 +25,7 @@ library
                  , Data.Aeson.Helpers
                  , Data.SimpleParsers
   build-depends: base >= 4.7 && < 5
+               , praglude
                , aeson
                , bytestring
                , data-default
