@@ -21,6 +21,7 @@ library
                  , Web.Resourcerer.Serve
                  , Web.Resourcerer.Mime
                  , Web.Resourcerer.Api
+                 , Data.SimpleParsers
   build-depends: base >= 4.7 && < 5
                , praglude >= 0.2.1.0 && <1
                , aeson

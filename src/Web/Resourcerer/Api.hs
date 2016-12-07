@@ -10,9 +10,17 @@ import Praglude
 
 import Web.Resourcerer.Resource (Resource (..))
 import Web.Resourcerer.Mime
+import qualified Data.Aeson as JSON
 
-data Method = GET | POST | PUT | DELETE
+data Method = GET | POST | PUT | DELETE | OtherMethod ByteString
     deriving (Show, Read)
+
+methodFromBS :: ByteString -> Method
+methodFromBS "GET" = GET
+methodFromBS "POST" = POST
+methodFromBS "PUT" = PUT
+methodFromBS "DELETE" = DELETE
+methodFromBS m = OtherMethod m
 
 data PostedBody =
     PostedBody
@@ -61,7 +69,48 @@ runResource resource = do
 
 
 getResource :: Resource -> Api ApiResponse
-getResource = undefined
+getResource resource = do
+    p <- use remainingPath
+    if p == []
+        then getResourceSelf resource
+        else getResourceChild resource
+
+jsonToAList :: Value -> [(Text, Value)]
+jsonToAList (JSON.Object m) = pairs m
+jsonToAList x = [("value", x)]
+
+resourceDigest :: Resource -> IO Value
+resourceDigest resource = do
+    let method = fromMaybe (return JSON.Null) $ getStructuredBody resource
+    liftIO method
+
+getResourceSelf :: Resource -> Api ApiResponse
+getResourceSelf resource = do
+    let method = fromMaybe (return $ object []) $ getStructuredBody resource
+    body <- jsonToAList <$> liftIO method
+    let childrenMethod = fromMaybe (const $ return []) $ getChildren resource
+    children <- liftIO $ childrenMethod def
+    children' <- forM children $ \(name, child) -> do
+        val <- liftIO $ resourceDigest child
+        return (name, val)
+    let body' = object $ body <> children'
+    return $ StructuredBody body'
+
+getResourceChild :: Resource -> Api ApiResponse
+getResourceChild resource = do
+    childName <- consumePathItem
+    method <- maybe (throw DoesNotExistError) return $ getChild resource
+    child <- fromMaybe (throw DoesNotExistError) <$> liftIO (method childName)
+    getResource child
+
+consumePathItem :: Api Text
+consumePathItem = do
+    use remainingPath >>= \case
+        [] -> throw DoesNotExistError
+        (cur:remaining) -> do
+            consumedPath %= (<> [cur])
+            remainingPath .= remaining
+            return cur
 
 postResource :: Resource -> Api ApiResponse
 postResource = undefined
