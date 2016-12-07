@@ -23,6 +23,7 @@ import Network.Wai ( Application
                    , lazyRequestBody
                    )
 import Network.HTTP.Types ( status200
+                          , status400
                           , status404
                           , status405
                           , status406
@@ -137,11 +138,10 @@ apiResponseToWaiResponse accepts (BinaryBody ty body) =
     if any (Mime.isMatch ty) accepts
         then responseLBS status200 [("Content-type", Mime.pack ty)] body
         else structuredResponse accepts status406 "Not Acceptable"
-apiResponseToWaiResponse accepts (Stored name) =
-    structuredResponse accepts status200 (object ["id" ~> name])
 
 apiErrorToResponse :: ApiError -> (Status, Value)
 apiErrorToResponse DoesNotExistError = (status404, "Not Found")
 apiErrorToResponse AlreadyExistsError = (status409, "Already Exists")
 apiErrorToResponse UnsupportedOperationError = (status405, "Method Not Allowed")
 apiErrorToResponse UnsupportedMediaTypeError = (status406, "Not Acceptable")
+apiErrorToResponse InvalidRequestError = (status400, "Invalid Request")

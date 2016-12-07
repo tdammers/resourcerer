@@ -27,7 +27,17 @@ data Resource =
         { getStructuredBody :: Maybe (IO Value)
         , getChildren :: Maybe (ListSpec -> IO [(Text, Resource)]) 
         , getChild :: Maybe (Text -> IO (Maybe Resource))
+        , createChild :: Maybe (Value -> IO CreateResult)
+        , storeChild :: Maybe (Text -> Value -> IO StoreResult)
+        , deleteChild :: Maybe (Text -> IO DeleteResult)
         }
 
+data CreateResult = CreateFailedAlreadyExists
+                  | Created Text Resource
+data StoreResult = StoreFailedInvalidKey
+                 | Stored Text Resource
+data DeleteResult = DeleteFailedDoesNotExist
+                  | Deleted Text
+
 instance Default Resource where
-    def = Resource Nothing Nothing Nothing
+    def = Resource Nothing Nothing Nothing Nothing Nothing Nothing

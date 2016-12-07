@@ -10,6 +10,8 @@ import Network.Wai.Handler.Warp (run)
 import System.Environment (lookupEnv)
 import Web.Resourcerer.Resource ( Resource (..)
                                 , ListSpec (..)
+                                , StoreResult (..)
+                                , DeleteResult (..)
                                 )
 import Web.Resourcerer.Serve (resourceToApplication)
 
@@ -37,6 +39,20 @@ makeRootResource = do
                 , getChild =
                     Just $ \name -> do
                         fmap thingResource . lookup name <$> readIORef thingsRef
+                , storeChild =
+                    Just $ \name value -> do
+                        if name == ""
+                            then return StoreFailedInvalidKey
+                            else do
+                                modifyIORef' thingsRef $ insert name value
+                                return $ Stored name (thingResource value)
+                , deleteChild =
+                    Just $ \name -> do
+                        found <- atomicModifyIORef' thingsRef $ \m ->
+                            (delete name m, member name m)
+                        return $ if found
+                            then Deleted name
+                            else DeleteFailedDoesNotExist
                 }
 
     return $
@@ -48,7 +64,6 @@ makeRootResource = do
                 "things" -> return $ Just thingsResource
                 _ -> return Nothing
             }
-        
 
 main :: IO ()
 main = do

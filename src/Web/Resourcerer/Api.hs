@@ -8,7 +8,11 @@ where
 
 import Praglude
 
-import Web.Resourcerer.Resource (Resource (..))
+import Web.Resourcerer.Resource ( Resource (..)
+                                , CreateResult (..)
+                                , StoreResult (..)
+                                , DeleteResult (..)
+                                )
 import Web.Resourcerer.Mime
 import qualified Data.Aeson as JSON
 import Control.Monad.Except (MonadError (..), ExceptT, runExceptT, throwError)
@@ -45,12 +49,12 @@ makeLenses ''ApiContext
 
 data ApiResponse = StructuredBody Value
                  | BinaryBody MimeType LByteString
-                 | Stored Text
 
 data ApiError = DoesNotExistError
               | AlreadyExistsError
               | UnsupportedOperationError
               | UnsupportedMediaTypeError
+              | InvalidRequestError
               deriving (Generic, Show)
 
 instance Exception ApiError where
@@ -72,7 +76,7 @@ runResource resource = do
 getResource :: Resource -> Api ApiResponse
 getResource resource = do
     p <- use remainingPath
-    if p == []
+    if null p
         then getResourceSelf resource
         else getResourceChild resource
 
@@ -89,24 +93,12 @@ resourceDigest resource = do
 maybeError :: MonadError e m => e -> Maybe a -> m a
 maybeError e = maybe (throwError e) return
 
-getResourceSelf :: Resource -> Api ApiResponse
-getResourceSelf resource = do
-    let method = fromMaybe (return JSON.Null) $ getStructuredBody resource
-    body <- jsonToAList <$> liftIO method
-    let childrenMethod = fromMaybe (const $ return []) $ getChildren resource
-    children <- liftIO $ childrenMethod def
-    children' <- forM children $ \(name, child) -> do
-        val <- liftIO $ resourceDigest child
-        return (name, val)
-    let body' = object $ body <> children'
-    return $ StructuredBody body'
-
-getResourceChild :: Resource -> Api ApiResponse
-getResourceChild resource = do
+withChild :: (Resource -> Api a) -> Resource -> Api a
+withChild go resource = do
     childName <- consumePathItem
     method <- maybeError DoesNotExistError $ getChild resource
     child <- maybeError DoesNotExistError =<< liftIO (method childName)
-    getResource child
+    go child
 
 consumePathItem :: Api Text
 consumePathItem = do
@@ -117,11 +109,92 @@ consumePathItem = do
             remainingPath .= remaining
             return cur
 
+getResourceStructuredBody :: Resource -> Api Value
+getResourceStructuredBody resource =
+    case getStructuredBody resource of
+        Nothing -> return JSON.Null
+        Just method -> liftIO method
+
+getResourceSelf :: Resource -> Api ApiResponse
+getResourceSelf resource = do
+    body <- jsonToAList <$> getResourceStructuredBody resource
+    let childrenMethod = fromMaybe (const $ return []) $ getChildren resource
+    children <- liftIO $ childrenMethod def
+    children' <- forM children $ \(name, child) -> do
+        val <- liftIO $ resourceDigest child
+        return (name, val)
+    let body' = object $ body <> children'
+    return $ StructuredBody body'
+
+getResourceChild :: Resource -> Api ApiResponse
+getResourceChild = withChild getResource
+
 postResource :: Resource -> Api ApiResponse
-postResource resource = throwError UnsupportedOperationError
+postResource resource = do
+    p <- use remainingPath
+    if null p
+        then postResourceSelf resource
+        else postResourceChild resource
+
+postResourceSelf :: Resource -> Api ApiResponse
+postResourceSelf resource = do
+    create <- maybeError UnsupportedOperationError $ createChild resource
+    getBody <- use postedBody
+    body <- maybeError UnsupportedMediaTypeError =<< (view postedValue <$> liftIO getBody)
+    liftIO (create body) >>= \case
+        CreateFailedAlreadyExists ->
+            throwError AlreadyExistsError
+        Created name childResource -> do
+            body <- getResourceStructuredBody childResource
+            return . StructuredBody . object $
+                [ "id" ~> name
+                , "value" ~> body
+                ]
+            
+postResourceChild :: Resource -> Api ApiResponse
+postResourceChild = withChild postResource
 
 putResource :: Resource -> Api ApiResponse
-putResource resource = throwError UnsupportedOperationError
+putResource resource = do
+    p <- use remainingPath
+    case p of
+        [] -> throwError DoesNotExistError
+        [x] -> putResourceSelf resource x
+        xs -> putResourceChild resource
+
+putResourceSelf :: Resource -> Text -> Api ApiResponse
+putResourceSelf resource name = do
+    store <- maybeError UnsupportedOperationError $ storeChild resource
+    getBody <- use postedBody
+    body <- maybeError UnsupportedMediaTypeError =<< (view postedValue <$> liftIO getBody)
+    liftIO (store name body) >>= \case
+        StoreFailedInvalidKey ->
+            throwError InvalidRequestError
+        Stored name childResource -> do
+            body <- getResourceStructuredBody childResource
+            return . StructuredBody . object $
+                [ "id" ~> name
+                , "value" ~> body
+                ]
+
+putResourceChild :: Resource -> Api ApiResponse
+putResourceChild = withChild putResource
 
 deleteResource :: Resource -> Api ApiResponse
-deleteResource resource = throwError UnsupportedOperationError
+deleteResource resource = do
+    p <- use remainingPath
+    case p of
+        [] -> throwError DoesNotExistError
+        [x] -> deleteResourceSelf resource x
+        xs -> withChild deleteResource resource
+
+deleteResourceSelf :: Resource -> Text -> Api ApiResponse
+deleteResourceSelf resource name = do
+    delete <- maybeError UnsupportedOperationError $ deleteChild resource
+    liftIO (delete name) >>= \case
+        DeleteFailedDoesNotExist ->
+            throwError DoesNotExistError
+        Deleted name ->
+            return . StructuredBody . object $
+                [ "id" ~> name
+                ]
