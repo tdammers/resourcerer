@@ -1,5 +1,6 @@
-{-#LANGUAGE NoImplicitPrelude #-}
 module Web.Resourcerer
+( Resource (..)
+)
 where
 
-import Praglude
+import Web.Resourcerer.Resource

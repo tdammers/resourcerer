@@ -1,91 +1,18 @@
 {-#LANGUAGE OverloadedStrings #-}
 {-#LANGUAGE DeriveGeneric #-}
+{-#LANGUAGE NoImplicitPrelude #-}
 module Main where
 
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
-import Network.HTTP.Types (status200)
-import Network.Wai (Application, responseLBS)
+import Praglude
+
 import Network.Wai.Handler.Warp (run)
 import System.Environment (lookupEnv)
 import Web.Resourcerer.Resource ( Resource (..)
-                                , StoreResult (..)
-                                , DeleteResult (..)
-                                , ListSpec (..)
-                                , defResource
-                                , mount
                                 )
 import Web.Resourcerer.Serve (resourceToApplication)
-import Data.Default (def)
-import Data.IORef
-import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HashMap
-import Data.Aeson (ToJSON, FromJSON, toJSON, fromJSON, (.=))
-import qualified Data.Aeson as JSON
-import Data.Aeson.Helpers (fromJSONMay, (.==))
-import Data.Text (Text)
-import qualified Data.Text as Text
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.ByteString.Lazy.UTF8 as LUTF8
-import GHC.Generics
-
-textToLBS :: Text -> LBS.ByteString
-textToLBS = LUTF8.fromString . Text.unpack
-
-data Fruit =
-    Fruit
-        { fruitName :: Text
-        , fruitMessage :: Text
-        }
-        deriving (Show, Eq, Generic)
-
-instance ToJSON Fruit where
-
-instance FromJSON Fruit where
-
-fruitResource :: Fruit -> Resource
-fruitResource fruit =
-    defResource
-        { getStructuredBody = return $ toJSON fruit
-        , getDigestBody = return $ JSON.object [ "fruitName" .= fruitName fruit ]
-        }
-
-
-makeFruitResource :: [(Text, Fruit)] -> IO Resource
-makeFruitResource fruit = do
-    fruitRef <- newIORef $ HashMap.fromList fruit
-    return $ defResource
-        { listChildren = listIORef fruitRef
-        , getChild = getIORef fruitRef
-        , storeStructuredDocument = storeFruit fruitRef
-        }
-
-storeFruit :: IORef (HashMap Text Fruit) -> Text -> JSON.Value -> IO StoreResult
-storeFruit fruitRef name json = do
-    case JSON.fromJSON json of
-        JSON.Success fruit -> putIORef fruitRef name fruit
-        JSON.Error err -> return StoreFailedMalformed
-
-listIORef :: IORef (HashMap Text Fruit) -> ListSpec -> IO [(Text, Resource)]
-listIORef fruit spec =
-    HashMap.toList . fmap fruitResource <$> readIORef fruit
-
-getIORef :: IORef (HashMap Text Fruit) -> Text -> IO (Maybe Resource)
-getIORef fruit name =
-    fmap fruitResource . HashMap.lookup name <$> readIORef fruit
-
-putIORef :: IORef (HashMap Text Fruit) -> Text -> Fruit -> IO StoreResult
-putIORef fruit name item = do
-    modifyIORef fruit $ HashMap.insert name item
-    return $ Updated name
 
 makeRootResource :: IO Resource
-makeRootResource = do
-    let fruit =
-            [ ("apple", Fruit "Apple" "I'm an apple, so what.")
-            ]
-    fruitResource <- makeFruitResource fruit
-    return $ mount "fruit" fruitResource defResource
+makeRootResource = undefined
 
 main :: IO ()
 main = do

@@ -39,15 +39,14 @@ packages:
 - '.'
 - location:
     git: https://github.com/tdammers/praglude
-    commit: '8f7b89f'
+    commit: '0.2.1.0'
 
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 extra-deps:
-- 'praglude-0.1.0.0'
+- 'praglude-0.2.1.0'
 - 'casing-0.1.0.1'
 - 'string-convert-3.0.1'
-- 'semigroups-0.18.2'
 
 # Override default flag values for local packages and extra-deps
 flags: {}

@@ -19,13 +19,10 @@ library
                  , Web.Resourcerer.Resource
                  , Web.Resourcerer.Hateoas
                  , Web.Resourcerer.Serve
-                 , Web.Resourcerer.Serve.Exceptions
-                 , Web.Resourcerer.Serve.Responses
                  , Web.Resourcerer.Mime
-                 , Data.Aeson.Helpers
-                 , Data.SimpleParsers
+                 , Web.Resourcerer.Api
   build-depends: base >= 4.7 && < 5
-               , praglude
+               , praglude >= 0.2.1.0 && <1
                , aeson
                , bytestring
                , data-default
@@ -43,6 +40,7 @@ executable resourcerer-example
     main-is: Main.hs
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
     build-depends: base
+                 , praglude >= 0.2.1.0 && <1
                  , resourcerer
                  , bytestring
                  , aeson

@@ -1,76 +1,73 @@
-{-#LANGUAGE NoImplicitPrelude #-}
 {-#LANGUAGE OverloadedStrings #-}
+{-#LANGUAGE NoImplicitPrelude #-}
+{-#LANGUAGE TemplateHaskell #-}
 {-#LANGUAGE LambdaCase #-}
+{-#LANGUAGE DeriveGeneric #-}
 module Web.Resourcerer.Api
 where
 
 import Praglude
-import Web.Resourcerer.Resource
-import qualified Data.Aeson as JSON
 
-data Method = GET
-            | POST
-            | PUT
-            | DELETE
-            | PATCH
-    deriving (Show, Read, Eq, Enum)
+import Web.Resourcerer.Resource (Resource (..))
+import Web.Resourcerer.Mime
 
-instance ToJSON Method where
-    toJSON = \case
-        GET -> "GET"
-        POST -> "POST"
-        PUT -> "PUT"
-        DELETE -> "DELETE"
-        PATCH -> "PATCH"
+data Method = GET | POST | PUT | DELETE
+    deriving (Show, Read)
 
-instance FromJSON Method where
-    parseJSON = \case
-        JSON.String "POST" -> return GET
-        JSON.String "POST" -> return POST
-        JSON.String "PUT" -> return PUT
-        JSON.String "DELETE" -> return DELETE
-        JSON.String "PATCH" -> return PATCH
-        _ -> fail "Invalid JSON for Method"
-
-data Payload = StructuredPayload Value
-             | DumbPayload MimeType LByteString
-
-data Request =
-    Request
-        { _remainingPath :: [Text]
-        , _parentPath :: [Text]
-        , _method :: Method
-        , _requestPayload :: Maybe Payload
+data PostedBody =
+    PostedBody
+        { _postedSource :: LByteString
+        , _postedType :: MimeType
+        , _postedValue :: Maybe Value
         }
 
-data Response = GetResponse Payload
-              | CreatedResponse Identifier
-              | StoredResponse
-              | DeletedResponse
+makeLenses ''PostedBody
 
-type Api = Request -> IO Response
+data ApiContext =
+    ApiContext
+        { _consumedPath :: [Text]
+        , _remainingPath :: [Text]
+        , _method :: Method
+        , _accept :: [MimeType]
+        , _postedBody :: PostedBody
+        }
 
-api :: Resource -> Api
-api resource rq =
-    case rq ^. method of
-        GET -> getResource resource rq
-        POST -> postResource resource rq
-        PUT -> putResource resource rq
-        DELETE -> deleteResource resource rq
-        _ -> throw MethodNotAllowed
+makeLenses ''ApiContext
 
-getResource :: Resource -> Api
-getResource resource rq =
-    case rq ^. remainingPath of
-        [] -> getResourceSelf resource rq
-        _ -> do
-            (resource', rq') <- getChildResource resource rq
-            getResource resource' rq'
+data ApiResponse = StructuredBody Value
+                 | BinaryBody MimeType LByteString
+                 | Stored Text
 
-getChildResource :: Resource -> Api
-getChildResource resource rq = do
-    case rq ^. remainingPath of
-        [] -> raise NotFound
-        (x:xs) -> do
+data ApiError = DoesNotExistError
+              | AlreadyExistsError
+              | UnsupportedOperationError
+              | UnsupportedMediaTypeError
+              deriving (Generic, Show)
 
-            
+instance Exception ApiError where
+
+type Api = StateT ApiContext IO
+
+runApi :: Api a -> ApiContext -> IO a
+runApi = evalStateT
+
+runResource :: Resource -> Api ApiResponse
+runResource resource = do
+    use method >>= \case
+        GET -> getResource resource
+        POST -> postResource resource
+        PUT -> putResource resource
+        DELETE -> deleteResource resource
+
+
+getResource :: Resource -> Api ApiResponse
+getResource = undefined
+
+postResource :: Resource -> Api ApiResponse
+postResource = undefined
+
+putResource :: Resource -> Api ApiResponse
+putResource = undefined
+
+deleteResource :: Resource -> Api ApiResponse
+deleteResource = undefined

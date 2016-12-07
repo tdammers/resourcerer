@@ -25,6 +25,7 @@ where
 import Praglude
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString as BS
+import Data.Monoid
 import qualified Data.List as List
 import Data.Word (Word8)
 import Data.SimpleParsers

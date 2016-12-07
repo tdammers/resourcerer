@@ -6,7 +6,7 @@ function watch-example() {
         resourcerer-example &
         PID="$!"
         sleep 0.1
-        curl 'http://localhost:5000/' | json_pp
+        curl 'http://localhost:5000/'
         inotifywait -e modify -e attrib "$(which resourcerer-example)"
         kill "$!"
         sleep 1
