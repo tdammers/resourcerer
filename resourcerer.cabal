@@ -29,6 +29,7 @@ library
                , data-default
                , http-types
                , mime-types
+               , mtl
                , scientific
                , text
                , unordered-containers

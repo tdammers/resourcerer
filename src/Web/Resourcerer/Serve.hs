@@ -32,19 +32,19 @@ import Network.HTTP.Types ( status200
 import qualified Data.Aeson as JSON
 
 resourceToApplication :: Resource -> Application
-resourceToApplication resource rq respond =
-    resourceToApplication' resource rq respond
-        `catch` \err -> catchApiError err rq respond
-
-resourceToApplication' :: Resource -> Application
-resourceToApplication' resource rq respond = do
+resourceToApplication resource rq respond = do
     let apiContext = waiRequestToApiContext rq
         api = runResource resource
         accepts = apiContext ^. Api.accept
-    apiResponse <- runApi api apiContext
+    apiResult <- runApi api apiContext
+    (either catchApiError serveApiResponse apiResult) rq respond
+
+serveApiResponse :: ApiResponse -> Application
+serveApiResponse apiResponse rq respond = do
+    let accepts = requestAccepts rq
     respond . apiResponseToWaiResponse accepts $ apiResponse
 
-catchApiError :: ApiError -> Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
+catchApiError :: ApiError -> Application
 catchApiError err rq respond = do
     let (status, value) = apiErrorToResponse err
         accepts = requestAccepts rq

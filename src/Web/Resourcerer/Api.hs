@@ -11,6 +11,7 @@ import Praglude
 import Web.Resourcerer.Resource (Resource (..))
 import Web.Resourcerer.Mime
 import qualified Data.Aeson as JSON
+import Control.Monad.Except (ExceptT, runExceptT, throwError)
 
 data Method = GET | POST | PUT | DELETE | OtherMethod ByteString
     deriving (Show, Read)
@@ -54,10 +55,10 @@ data ApiError = DoesNotExistError
 
 instance Exception ApiError where
 
-type Api = StateT ApiContext IO
+type Api = ExceptT ApiError (StateT ApiContext IO)
 
-runApi :: Api a -> ApiContext -> IO a
-runApi = evalStateT
+runApi :: Api a -> ApiContext -> IO (Either ApiError a)
+runApi = evalStateT . runExceptT
 
 runResource :: Resource -> Api ApiResponse
 runResource resource = do
@@ -86,7 +87,7 @@ resourceDigest resource = do
 
 getResourceSelf :: Resource -> Api ApiResponse
 getResourceSelf resource = do
-    let method = fromMaybe (return $ object []) $ getStructuredBody resource
+    method <- maybe (throwError UnsupportedOperationError) return $ getStructuredBody resource
     body <- jsonToAList <$> liftIO method
     let childrenMethod = fromMaybe (const $ return []) $ getChildren resource
     children <- liftIO $ childrenMethod def
@@ -99,24 +100,24 @@ getResourceSelf resource = do
 getResourceChild :: Resource -> Api ApiResponse
 getResourceChild resource = do
     childName <- consumePathItem
-    method <- maybe (throw DoesNotExistError) return $ getChild resource
-    child <- fromMaybe (throw DoesNotExistError) <$> liftIO (method childName)
+    method <- maybe (throwError DoesNotExistError) return $ getChild resource
+    child <- maybe (throwError DoesNotExistError) return =<< liftIO (method childName)
     getResource child
 
 consumePathItem :: Api Text
 consumePathItem = do
     use remainingPath >>= \case
-        [] -> throw DoesNotExistError
+        [] -> throwError DoesNotExistError
         (cur:remaining) -> do
             consumedPath %= (<> [cur])
             remainingPath .= remaining
             return cur
 
 postResource :: Resource -> Api ApiResponse
-postResource = undefined
+postResource resource = throwError UnsupportedOperationError
 
 putResource :: Resource -> Api ApiResponse
-putResource = undefined
+putResource resource = throwError UnsupportedOperationError
 
 deleteResource :: Resource -> Api ApiResponse
-deleteResource = undefined
+deleteResource resource = throwError UnsupportedOperationError
