@@ -37,7 +37,7 @@ data ApiContext =
         , _remainingPath :: [Text]
         , _method :: Method
         , _accept :: [MimeType]
-        , _postedBody :: PostedBody
+        , _postedBody :: IO PostedBody
         }
 
 makeLenses ''ApiContext
