@@ -11,7 +11,7 @@ import Praglude
 import Web.Resourcerer.Resource (Resource (..))
 import Web.Resourcerer.Mime
 import qualified Data.Aeson as JSON
-import Control.Monad.Except (ExceptT, runExceptT, throwError)
+import Control.Monad.Except (MonadError (..), ExceptT, runExceptT, throwError)
 
 data Method = GET | POST | PUT | DELETE | OtherMethod ByteString
     deriving (Show, Read)
@@ -78,6 +78,7 @@ getResource resource = do
 
 jsonToAList :: Value -> [(Text, Value)]
 jsonToAList (JSON.Object m) = pairs m
+jsonToAList JSON.Null = []
 jsonToAList x = [("value", x)]
 
 resourceDigest :: Resource -> IO Value
@@ -85,9 +86,12 @@ resourceDigest resource = do
     let method = fromMaybe (return JSON.Null) $ getStructuredBody resource
     liftIO method
 
+maybeError :: MonadError e m => e -> Maybe a -> m a
+maybeError e = maybe (throwError e) return
+
 getResourceSelf :: Resource -> Api ApiResponse
 getResourceSelf resource = do
-    method <- maybe (throwError UnsupportedOperationError) return $ getStructuredBody resource
+    let method = fromMaybe (return JSON.Null) $ getStructuredBody resource
     body <- jsonToAList <$> liftIO method
     let childrenMethod = fromMaybe (const $ return []) $ getChildren resource
     children <- liftIO $ childrenMethod def
@@ -100,8 +104,8 @@ getResourceSelf resource = do
 getResourceChild :: Resource -> Api ApiResponse
 getResourceChild resource = do
     childName <- consumePathItem
-    method <- maybe (throwError DoesNotExistError) return $ getChild resource
-    child <- maybe (throwError DoesNotExistError) return =<< liftIO (method childName)
+    method <- maybeError DoesNotExistError $ getChild resource
+    child <- maybeError DoesNotExistError =<< liftIO (method childName)
     getResource child
 
 consumePathItem :: Api Text
