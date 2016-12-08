@@ -14,6 +14,7 @@ import Web.Resourcerer.Resource ( Resource (..)
                                 , CreateResult (..)
                                 , StoreResult (..)
                                 , DeleteResult (..)
+                                , ListSpec (..)
                                 )
 import Web.Resourcerer.Mime
 import qualified Data.Aeson as JSON
@@ -131,6 +132,10 @@ param :: FromQueryParam a => Text -> Api a
 param paramName =
     maybeError InvalidRequestError =<< paramMay paramName
 
+paramDef :: FromQueryParam a => a -> Text -> Api a
+paramDef d paramName =
+    fromMaybe d <$> paramMay paramName
+
 jsonToAList :: Value -> [(Text, Value)]
 jsonToAList (JSON.Object m) = pairs m
 jsonToAList JSON.Null = []
@@ -160,6 +165,14 @@ consumePathItem = do
             remainingPath .= remaining
             return cur
 
+getListSpec :: Api ListSpec
+getListSpec = do
+    count <- paramDef (listCount def) "count"
+    offset <- paramDef (listOffset def) "offset"
+    return $ def
+        { listCount = count
+        , listOffset = offset
+        }
 
 getResource :: Resource -> Api ApiResponse
 getResource resource = do
@@ -177,12 +190,13 @@ getResourceStructuredBody resource =
 getResourceSelf :: Resource -> Api ApiResponse
 getResourceSelf resource = do
     body <- jsonToAList <$> getResourceStructuredBody resource
+    listSpec <- getListSpec
     let childrenMethod = fromMaybe (const $ return []) $ getChildren resource
-    children <- liftIO $ childrenMethod def
+    children <- liftIO $ childrenMethod listSpec
     children' <- forM children $ \(name, child) -> do
         val <- liftIO $ resourceDigest child
-        return (name, val)
-    let body' = object $ body <> children'
+        return . object $ jsonToAList val <> ["_id" ~> name]
+    let body' = object $ body <> ["_items" ~> children']
     return $ StructuredBody body'
 
 getResourceChild :: Resource -> Api ApiResponse
@@ -209,7 +223,7 @@ postResourceSelf resource = do
                 [ "id" ~> name
                 , "value" ~> body
                 ]
-            
+
 postResourceChild :: Resource -> Api ApiResponse
 postResourceChild = withChild postResource
 

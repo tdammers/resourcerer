@@ -12,8 +12,10 @@ import Web.Resourcerer.Resource ( Resource (..)
                                 , ListSpec (..)
                                 , StoreResult (..)
                                 , DeleteResult (..)
+                                , ListSpec (..)
                                 )
 import Web.Resourcerer.Serve (resourceToApplication)
+import Text.Read (readMaybe)
 
 makeRootResource :: IO Resource
 makeRootResource = do
@@ -26,6 +28,24 @@ makeRootResource = do
 
     let thingResource thing =
             def { getStructuredBody = Just $ return thing }
+
+    let integerResource :: Integer -> Resource
+        integerResource i =
+            def { getStructuredBody = Just $ return (toJSON i) }
+
+    let integersResource =
+            def { getChildren = Just $ \listSpec -> do
+                    let first = listOffset listSpec
+                        last = pred $ first + listCount listSpec
+                        range = [first..last]
+                    return
+                        [ (s (show i), integerResource i)
+                        | i <- range
+                        ]
+                , getChild = Just $ \name -> do
+                    print name
+                    return (integerResource <$> readMaybe (s name))
+                }
 
     let thingsResource =
             def { getChildren =
@@ -59,9 +79,12 @@ makeRootResource = do
         def { getChildren =
                 Just $ \listSpec -> do
                     return
-                        [ ("things", thingsResource) ]
+                        [ ("things", thingsResource)
+                        , ("integers", integersResource)
+                        ]
             , getChild = Just $ \case
                 "things" -> return $ Just thingsResource
+                "integers" -> return $ Just integersResource
                 _ -> return Nothing
             }
 
