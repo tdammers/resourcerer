@@ -25,12 +25,19 @@ instance Default KeyNames where
 joinUrlPath :: [Text] -> Text
 joinUrlPath = concat . map ("/" <>)
 
+maybeIf :: Bool -> a -> Maybe a
+maybeIf True = Just
+maybeIf False = const Nothing
+
 hateoas :: KeyNames
         -> Text
         -> [Text]
         -> [(Text, Value)]
-hateoas kn selfID parentPath =
-    [ hrefName kn ~> joinUrlPath (parentPath <> [selfID])
-    , parentName kn ~> joinUrlPath parentPath
-    , idName kn ~> selfID
+hateoas kn selfID parentPath = catMaybes
+    [ Just $
+        hrefName kn ~> joinUrlPath (parentPath <> [selfID])
+    , maybeIf (parentPath /= []) $
+        parentName kn ~> joinUrlPath parentPath
+    , Just $
+        idName kn ~> selfID
     ]
