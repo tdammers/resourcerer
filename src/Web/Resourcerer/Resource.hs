@@ -25,7 +25,7 @@ instance Default ListSpec where
 data Resource =
     Resource
         { getStructuredBody :: Maybe (IO Value)
-        , getChildren :: Maybe (ListSpec -> IO [(Text, Resource)]) 
+        , getChildren :: Maybe (ListSpec -> IO [(Text, Resource)])
         , getChild :: Maybe (Text -> IO (Maybe Resource))
         , createChild :: Maybe (Value -> IO CreateResult)
         , storeChild :: Maybe (Text -> Value -> IO StoreResult)

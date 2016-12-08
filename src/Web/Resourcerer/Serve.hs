@@ -29,12 +29,13 @@ import Network.HTTP.Types ( status200
                           , status406
                           , status409
                           , Status
+                          , queryToQueryText
                           )
 import qualified Data.Aeson as JSON
 
 resourceToApplication :: Resource -> Application
 resourceToApplication resource rq respond = do
-    let apiContext = waiRequestToApiContext rq
+    let apiContext = waiRequestToApiContext rq def
         api = runResource resource
         accepts = apiContext ^. Api.accept
     apiResult <- runApi api apiContext
@@ -58,15 +59,16 @@ requestAccepts = Mime.parseAccept
                . AList
                . requestHeaders
 
-waiRequestToApiContext :: Request -> ApiContext
-waiRequestToApiContext rq =
+waiRequestToApiContext :: Request -> ApiContext -> ApiContext
+waiRequestToApiContext rq context =
     let accepts = requestAccepts rq
         contentType = Mime.parse . fromMaybe "text/json" . lookup "Content-type" . AList . requestHeaders $ rq
-    in ApiContext
+    in context
         { _consumedPath = []
         , _remainingPath = pathInfo rq
         , _method = methodFromBS $ requestMethod rq
         , _accept = accepts
+        , _queryParams = fromPairs . queryToQueryText $ queryString rq
         , _postedBody = do
             rawBody <- lazyRequestBody rq
             let parsedBody = parseRequestBody contentType rawBody

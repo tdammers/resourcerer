@@ -3,6 +3,8 @@
 {-#LANGUAGE TemplateHaskell #-}
 {-#LANGUAGE LambdaCase #-}
 {-#LANGUAGE DeriveGeneric #-}
+{-#LANGUAGE TypeSynonymInstances #-}
+{-#LANGUAGE FlexibleInstances #-}
 module Web.Resourcerer.Api
 where
 
@@ -16,6 +18,7 @@ import Web.Resourcerer.Resource ( Resource (..)
 import Web.Resourcerer.Mime
 import qualified Data.Aeson as JSON
 import Control.Monad.Except (MonadError (..), ExceptT, runExceptT, throwError)
+import Text.Read (readMaybe)
 
 data Method = GET | POST | PUT | DELETE | OtherMethod ByteString
     deriving (Show, Read)
@@ -36,16 +39,63 @@ data PostedBody =
 
 makeLenses ''PostedBody
 
+instance Default PostedBody where
+    def = PostedBody "" "application/octet-stream" Nothing
+
 data ApiContext =
     ApiContext
         { _consumedPath :: [Text]
         , _remainingPath :: [Text]
+        , _queryParams :: AList Text (Maybe Text)
         , _method :: Method
         , _accept :: [MimeType]
         , _postedBody :: IO PostedBody
         }
 
 makeLenses ''ApiContext
+
+class FromQueryParam a where
+    fromQueryParam :: Maybe Text -> Maybe a
+
+instance FromQueryParam Text where
+    fromQueryParam = id
+
+instance FromQueryParam LText where
+    fromQueryParam = fmap s
+
+instance FromQueryParam String where
+    fromQueryParam = fmap s
+
+instance FromQueryParam ByteString where
+    fromQueryParam = fmap s
+
+instance FromQueryParam LByteString where
+    fromQueryParam = fmap s
+
+instance FromQueryParam Int where
+    fromQueryParam = (>>= readMaybe) . fmap s
+
+instance FromQueryParam Integer where
+    fromQueryParam = (>>= readMaybe) . fmap s
+
+instance FromQueryParam Double where
+    fromQueryParam = (>>= readMaybe) . fmap s
+
+instance FromQueryParam () where
+    fromQueryParam = const . Just $ ()
+
+instance FromQueryParam Bool where
+    fromQueryParam = fmap (/= "")
+
+instance Default ApiContext where
+    def = ApiContext
+            { _consumedPath = []
+            , _remainingPath = []
+            , _queryParams = AList []
+            , _method = GET
+            , _accept = []
+            , _postedBody = return def
+            }
 
 data ApiResponse = StructuredBody Value
                  | BinaryBody MimeType LByteString
@@ -72,13 +122,14 @@ runResource resource = do
         PUT -> putResource resource
         DELETE -> deleteResource resource
 
+paramMay :: FromQueryParam a => Text -> Api (Maybe a)
+paramMay paramName = do
+    rawValue <- join . lookup paramName <$> use queryParams
+    return $ fromQueryParam rawValue
 
-getResource :: Resource -> Api ApiResponse
-getResource resource = do
-    p <- use remainingPath
-    if null p
-        then getResourceSelf resource
-        else getResourceChild resource
+param :: FromQueryParam a => Text -> Api a
+param paramName =
+    maybeError InvalidRequestError =<< paramMay paramName
 
 jsonToAList :: Value -> [(Text, Value)]
 jsonToAList (JSON.Object m) = pairs m
@@ -108,6 +159,14 @@ consumePathItem = do
             consumedPath %= (<> [cur])
             remainingPath .= remaining
             return cur
+
+
+getResource :: Resource -> Api ApiResponse
+getResource resource = do
+    p <- use remainingPath
+    if null p
+        then getResourceSelf resource
+        else getResourceChild resource
 
 getResourceStructuredBody :: Resource -> Api Value
 getResourceStructuredBody resource =
