@@ -21,6 +21,7 @@ import qualified Data.Aeson as JSON
 import Control.Monad.Except (MonadError (..), ExceptT, runExceptT, throwError)
 import Text.Read (readMaybe)
 import Web.Resourcerer.Mime (MimeType)
+import Web.Resourcerer.Hateoas (hateoas)
 import qualified Web.Resourcerer.Mime as Mime
 
 data Method = GET | POST | PUT | DELETE | OtherMethod ByteString
@@ -207,12 +208,23 @@ getResourceSelfStructured :: Resource -> Api ApiResponse
 getResourceSelfStructured resource = do
     body <- jsonToAList <$> getResourceStructuredBody resource
     listSpec <- getListSpec
+    selfPath <- use consumedPath
+    let parentPath = dropEnd 1 selfPath
+        selfName = case takeEnd 1 selfPath of
+                    [] -> ""
+                    (x:_) -> x
     let childrenMethod = fromMaybe (const $ return []) $ getChildren resource
     children <- liftIO $ childrenMethod listSpec
     children' <- forM children $ \(name, child) -> do
         val <- liftIO $ resourceDigest child
-        return . object $ jsonToAList val <> ["_id" ~> name]
-    let body' = object $ body <> ["_items" ~> children']
+        return . object $
+            jsonToAList val <>
+            (hateoas def name selfPath)
+    let hateoasProps = hateoas def selfName parentPath
+        body' = object $
+            body <>
+            ["_items" ~> children'] <>
+            hateoasProps
     return $ StructuredBody body'
 
 getResourceChild :: Resource -> Api ApiResponse
