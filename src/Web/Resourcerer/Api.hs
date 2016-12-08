@@ -20,6 +20,8 @@ import Web.Resourcerer.Mime
 import qualified Data.Aeson as JSON
 import Control.Monad.Except (MonadError (..), ExceptT, runExceptT, throwError)
 import Text.Read (readMaybe)
+import Web.Resourcerer.Mime (MimeType)
+import qualified Web.Resourcerer.Mime as Mime
 
 data Method = GET | POST | PUT | DELETE | OtherMethod ByteString
     deriving (Show, Read)
@@ -189,6 +191,20 @@ getResourceStructuredBody resource =
 
 getResourceSelf :: Resource -> Api ApiResponse
 getResourceSelf resource = do
+    accepted <- use accept
+    let typedBodyGetters = do
+            acceptable <- accepted
+            (ty, getter) <- getTypedBodies resource
+            if Mime.isMatch ty acceptable
+                then [(ty, getter)]
+                else []
+    case typedBodyGetters of
+        [] -> getResourceSelfStructured resource
+        ((ty, getter):_) -> BinaryBody ty <$> liftIO getter
+
+
+getResourceSelfStructured :: Resource -> Api ApiResponse
+getResourceSelfStructured resource = do
     body <- jsonToAList <$> getResourceStructuredBody resource
     listSpec <- getListSpec
     let childrenMethod = fromMaybe (const $ return []) $ getChildren resource

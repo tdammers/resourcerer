@@ -5,6 +5,8 @@ module Web.Resourcerer.Resource
 where
 
 import Praglude
+import Web.Resourcerer.Mime (MimeType)
+import qualified Web.Resourcerer.Mime as Mime
 
 data AscDesc = Ascending | Descending
     deriving (Show, Read, Eq, Ord, Enum, Bounded, Generic)
@@ -25,6 +27,7 @@ instance Default ListSpec where
 data Resource =
     Resource
         { getStructuredBody :: Maybe (IO Value)
+        , getTypedBodies :: [(MimeType, IO LByteString)]
         , getChildren :: Maybe (ListSpec -> IO [(Text, Resource)])
         , getChild :: Maybe (Text -> IO (Maybe Resource))
         , createChild :: Maybe (Value -> IO CreateResult)
@@ -40,4 +43,4 @@ data DeleteResult = DeleteFailedDoesNotExist
                   | Deleted Text
 
 instance Default Resource where
-    def = Resource Nothing Nothing Nothing Nothing Nothing Nothing
+    def = Resource Nothing [] Nothing Nothing Nothing Nothing Nothing

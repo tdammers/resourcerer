@@ -31,7 +31,11 @@ makeRootResource = do
 
     let integerResource :: Integer -> Resource
         integerResource i =
-            def { getStructuredBody = Just $ return (toJSON i) }
+            def { getStructuredBody = Just $ return (toJSON i)
+                , getTypedBodies =
+                    [ ("text/xml", return $ "<integer>" <> s (show i) <> "</integer>")
+                    ]
+                }
 
     let integersResource =
             def { getChildren = Just $ \listSpec -> do
@@ -43,7 +47,6 @@ makeRootResource = do
                         | i <- range
                         ]
                 , getChild = Just $ \name -> do
-                    print name
                     return (integerResource <$> readMaybe (s name))
                 }
 
